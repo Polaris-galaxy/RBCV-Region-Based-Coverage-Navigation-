@@ -1,0 +1,14 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- TODO: 改名请同步修改 package.xml / CMakeLists project -->
+  <arg name="regions_json" default="$(find map_tools)/maps/regions_map7.example.json"/>
+
+  <node pkg="coverage_regions_ros" type="partition_labels_publisher.py" name="region_partition_pub" output="screen">
+    <param name="regions_json" value="$(arg regions_json)"/>
+    <param name="map_topic" value="/map"/>
+    <param name="partition_topic" value="/region_partition_labels"/>
+    <param name="marker_topic" value="/region_partition_markers"/>
+    <param name="publish_markers" value="true"/>
+    <param name="rate_hz" value="1.0"/>
+  </node>
+</launch>

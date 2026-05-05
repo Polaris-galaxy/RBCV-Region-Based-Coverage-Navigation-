@@ -1,0 +1,15 @@
+<?xml version="1.0"?>
+<package format="2">
+  <!-- TODO: 按需改名 — 修改本文件的 <name> 与 CMakeLists project() 保持一致 -->
+  <name>coverage_regions_ros</name>
+  <version>0.1.0</version>
+  <description>ROS1：读取长方形分区 JSON，订阅 /map 后发布与地图对齐的分区标签栅格。</description>
+  <maintainer email="user@todo">TODO</maintainer>
+  <license>BSD</license>
+  <buildtool_depend>catkin</buildtool_depend>
+  <depend>rospy</depend>
+  <depend>nav_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>visualization_msgs</depend>
+  <depend>std_msgs</depend>
+</package>

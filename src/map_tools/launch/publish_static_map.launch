@@ -1,0 +1,13 @@
+<?xml version="1.0"?>
+<launch>
+  <arg name="map_yaml" default="$(find map_tools)/maps/map7.yaml"/>
+  <arg name="topic" default="/map"/>
+  <arg name="frame_id" default="map"/>
+
+  <node pkg="map_tools" type="publish_static_map.py" name="static_map_publisher" output="screen">
+    <param name="map_yaml" value="$(arg map_yaml)"/>
+    <param name="topic" value="$(arg topic)"/>
+    <param name="frame_id" value="$(arg frame_id)"/>
+    <param name="rate_hz" value="1.0"/>
+  </node>
+</launch>

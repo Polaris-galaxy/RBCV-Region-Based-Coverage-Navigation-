@@ -1,0 +1,13 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>map_tools</name>
+  <version>0.1.0</version>
+  <description>ROS1：地图 YAML/PGM 资源与 Python 桥接（加载 / 发布 OccupancyGrid）。可与 coverage_planner 同工作空间使用。</description>
+  <maintainer email="todo@todo">TODO</maintainer>
+  <license>BSD</license>
+  <buildtool_depend>catkin</buildtool_depend>
+  <depend>rospy</depend>
+  <depend>nav_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>std_msgs</depend>
+</package>

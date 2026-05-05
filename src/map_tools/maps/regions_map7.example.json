@@ -1,0 +1,20 @@
+{
+  "_comment": "在 RViz 或地图上量测地图坐标（米），编辑矩形；需与对应 *.yaml 的 origin/resolution 一致",
+  "frame_id": "map",
+  "regions": [
+    {
+      "id": "sector_A",
+      "xmin": -48.0,
+      "ymin": -50.0,
+      "xmax": -35.0,
+      "ymax": -38.0
+    },
+    {
+      "id": "sector_B",
+      "xmin": -35.0,
+      "ymin": -48.0,
+      "xmax": -22.0,
+      "ymax": -35.0
+    }
+  ]
+}
