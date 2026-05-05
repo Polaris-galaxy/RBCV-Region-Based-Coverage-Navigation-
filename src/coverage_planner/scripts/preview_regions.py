@@ -2,7 +2,7 @@
 
 用法::
 
-    py examples/preview_regions.py ../map_tools/maps/map7.yaml \
+    py scripts/preview_regions.py ../map_tools/maps/map7.yaml \
         ../map_tools/maps/regions_map7.example.json
 """
 from __future__ import annotations

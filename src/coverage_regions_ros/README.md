@@ -18,7 +18,9 @@
 ## 简要用法（备忘）
 
 ```bash
-roslaunch coverage_regions_ros publish_partition_labels.launch regions_json:=/绝对路径/regions.json
+# 分区 JSON 建议放在 map_tools/maps/，与离线脚本共用同一文件
+roslaunch coverage_regions_ros publish_partition_labels.launch \
+    regions_json:=$(rospack find map_tools)/maps/my_regions.json
 ```
 
 详见各子目录 README。

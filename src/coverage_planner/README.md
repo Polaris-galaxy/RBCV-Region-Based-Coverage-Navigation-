@@ -1,5 +1,7 @@
 # coverage_planner —— 含障碍大地图的等半径圆盘覆盖规划器
 
+本目录属于 **RBCV（Region-Based Coverage Navigation）** 仓库的 Python 规划包。
+
 针对 **大地图 + 窄通道（通道宽度 ≈ 观测直径） + 高障碍遮挡** 场景，
 求解最小观测点集合，使所有可见性受限的圆盘并集覆盖整个自由空间。
 
@@ -51,7 +53,7 @@ coverage_planner/
 │   ├── refine.py              ILS 局部精修
 │   ├── planner.py             顶层 DGR 流水线
 │   └── viz.py                 可视化辅助
-├── examples/                  见 examples/README.md
+├── scripts/                   见 scripts/README.md（命令行工具）
 └── tests/                     见 tests/README.md
 
 地图与分区 JSON 集中在 **`../map_tools/maps/`**（由 ``map_tools`` 包维护，
@@ -72,10 +74,10 @@ pip install -r requirements.txt
 
 ```bash
 cd src/coverage_planner
-py examples/preview_real_map.py ../map_tools/maps/map7.yaml
-py examples/draw_regions.py    ../map_tools/maps/map7.yaml ../map_tools/maps/my_regions.json
-py examples/preview_regions.py ../map_tools/maps/map7.yaml ../map_tools/maps/my_regions.json
-py examples/demo_regions.py    ../map_tools/maps/map7.yaml 2.5 ../map_tools/maps/my_regions.json
+py scripts/preview_real_map.py ../map_tools/maps/map7.yaml
+py scripts/draw_regions.py    ../map_tools/maps/map7.yaml ../map_tools/maps/my_regions.json
+py scripts/preview_regions.py ../map_tools/maps/map7.yaml ../map_tools/maps/my_regions.json
+py scripts/demo_regions.py    ../map_tools/maps/map7.yaml 2.5 ../map_tools/maps/my_regions.json
 ```
 
 ## 6. 当前实现状态

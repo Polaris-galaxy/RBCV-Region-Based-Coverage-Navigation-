@@ -1,19 +1,29 @@
-# 操作指南：地图分区 + 圆盘覆盖
+# 操作指南：地图分区 + 圆盘覆盖（RBCV）
 
-> 目标：把 `map_tools/maps` 里的栅格地图手动划分长方形分区，再用 `coverage_planner` 对每个分区做半径 **2.5 m** 的检测圆覆盖。**全程纯 Python，不需要 ROS。**
+> **RBCV** = Region-Based Coverage Navigation。  
+> 目标：把 **`src/map_tools/maps/`** 里的栅格地图手动划分长方形分区，再用 **`coverage_planner`** 对每个分区做半径 **2.5 m** 的检测圆覆盖。**离线步骤全程纯 Python，不需要 ROS。**
 
 ---
 
 ## 0. 前置环境（一次性）
 
+在 **仓库根目录** 下的 `src/` 安装依赖（路径按你本机克隆位置替换 `<仓库根>`）：
+
 ```powershell
-cd D:\Galaxy\其他\桌面\ROS2\src
+cd <仓库根>\src
+pip install -r requirements.txt
+```
+
+示例（文件夹名为 `RBCV-Region-Based-Coverage-Navigation-` 时）：
+
+```powershell
+cd D:\Galaxy\其他\桌面\RBCV-Region-Based-Coverage-Navigation-\src
 pip install -r requirements.txt
 ```
 
 依赖：`numpy` `scipy` `scikit-image` `imageio` `matplotlib` `pytest`。
 
-> 后续命令均假设当前目录为 **`src/coverage_planner`**（执行示例脚本时的工作目录）。
+> 后续命令均假设当前目录为 **`src/coverage_planner`**（执行 **`scripts/`** 下工具时的工作目录）。
 
 ---
 
@@ -33,7 +43,7 @@ map_tools/maps/
 > 想先看地图边界范围（米）：
 >
 > ```powershell
-> py examples\preview_real_map.py ..\map_tools\maps\map7.yaml
+> py scripts\preview_real_map.py ..\map_tools\maps\map7.yaml
 > ```
 >
 > 终端会打印 `shape`、`resolution`，结合 `yaml` 里的 `origin` 即可推算 x/y 范围。
@@ -47,7 +57,7 @@ map_tools/maps/
 ### 方式 A：交互式拖框（推荐）
 
 ```powershell
-py examples\draw_regions.py ..\map_tools\maps\map7.yaml ..\map_tools\maps\my_regions.json
+py scripts\draw_regions.py ..\map_tools\maps\map7.yaml ..\map_tools\maps\my_regions.json
 ```
 
 操作（窗口标题也有提示）：
@@ -89,7 +99,7 @@ py examples\draw_regions.py ..\map_tools\maps\map7.yaml ..\map_tools\maps\my_reg
 ## 3. 验证分区对齐
 
 ```powershell
-py examples\preview_regions.py ..\map_tools\maps\map7.yaml ..\map_tools\maps\my_regions.json
+py scripts\preview_regions.py ..\map_tools\maps\map7.yaml ..\map_tools\maps\my_regions.json
 ```
 
 终端会列出每个分区的：
@@ -99,14 +109,14 @@ py examples\preview_regions.py ..\map_tools\maps\map7.yaml ..\map_tools\maps\my_
 | `px_in_rect` | 矩形覆盖到的栅格数 |
 | `px_in_rect ∩ free` | 与自由空间相交的栅格数（**= 0 通常说明矩形落在障碍 / 地图外**） |
 
-弹出窗口：左图叠加矩形边框，右图用不同颜色显示 region ID（自动保存到 `examples/regions_preview.png`）。
+弹出窗口：左图叠加矩形边框，右图用不同颜色显示 region ID（自动保存到 `scripts/regions_preview.png`）。
 
 ---
 
 ## 4. 对每个分区做圆盘覆盖（半径 2.5 m）
 
 ```powershell
-py examples\demo_regions.py ..\map_tools\maps\map7.yaml 2.5 ..\map_tools\maps\my_regions.json
+py scripts\demo_regions.py ..\map_tools\maps\map7.yaml 2.5 ..\map_tools\maps\my_regions.json
 ```
 
 执行流程（每个分区 **独立** 完成）：
@@ -126,7 +136,7 @@ py examples\demo_regions.py ..\map_tools\maps\map7.yaml 2.5 ..\map_tools\maps\my
 输出：
 
 - 终端：每个 region 一行，包含 `kind / rect / wratio / |S| / 覆盖率`；
-- 图片：`examples/regions_result.png`（按 region 上色，每个圆 = 一个 `r = 2.5 m` 检测点）。
+- 图片：`scripts/regions_result.png`（按 region 上色，每个圆 = 一个 `r = 2.5 m` 检测点）。
 
 ---
 
@@ -139,8 +149,9 @@ from coverage_planner import (
 )
 from coverage_planner.map_io import meters_to_pixels
 
-free, info = load_ros_map("map_tools/maps/map7.yaml")
-spec = load_regions_json("map_tools/maps/my_regions.json")
+# 路径与示例脚本一致：工作目录为 src/coverage_planner 时用 ../map_tools/maps/
+free, info = load_ros_map("../map_tools/maps/map7.yaml")
+spec = load_regions_json("../map_tools/maps/my_regions.json")
 labels = rasterize_regions(spec, info, free.shape)
 
 partition = plan_partitions(
@@ -200,15 +211,15 @@ roslaunch coverage_regions_ros publish_partition_labels.launch \
 
 ---
 
-## 文件速查
+## 文件速查（相对仓库根）
 
 | 用途 | 路径 |
 |------|------|
-| 地图资源 | `src/map_tools/maps/` |
-| 分区 JSON 解析 | `coverage_planner/region_io.py` |
-| 分区自适应规划 | `coverage_planner/region_planner.py` |
-| 交互划分 | `examples/draw_regions.py` |
-| 分区预览 | `examples/preview_regions.py` |
-| 端到端覆盖 | `examples/demo_regions.py` |
+| 地图 YAML/PGM、分区 JSON | `src/map_tools/maps/` |
+| 分区解析（Python 模块） | `src/coverage_planner/coverage_planner/region_io.py` |
+| 分区自适应规划（Python 模块） | `src/coverage_planner/coverage_planner/region_planner.py` |
+| 交互划分脚本 | `src/coverage_planner/scripts/draw_regions.py` |
+| 分区预览脚本 | `src/coverage_planner/scripts/preview_regions.py` |
+| 端到端覆盖脚本 | `src/coverage_planner/scripts/demo_regions.py` |
 
-更细的算法说明见 `coverage_planner/docs/ALGORITHM.md`。
+更细的算法说明见 `src/coverage_planner/docs/ALGORITHM.md`。

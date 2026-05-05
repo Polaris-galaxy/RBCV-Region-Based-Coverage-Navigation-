@@ -2,11 +2,11 @@
 
 用法 (默认 r=2.5m, 与项目约定一致)::
 
-    py examples/demo_regions.py
-    py examples/demo_regions.py ../map_tools/maps/map7.yaml 2.5 \
+    py scripts/demo_regions.py
+    py scripts/demo_regions.py ../map_tools/maps/map7.yaml 2.5 \
         ../map_tools/maps/regions_map7.example.json
 
-输出 ``examples/regions_result.png`` 与控制台明细.
+输出 ``scripts/regions_result.png`` 与控制台明细.
 """
 from __future__ import annotations
 

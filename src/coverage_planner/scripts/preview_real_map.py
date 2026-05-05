@@ -1,7 +1,7 @@
 """加载真实 ROS 地图并保存预览图.
 
 用法:
-    py examples/preview_real_map.py ../map_tools/maps/map7.yaml
+    py scripts/preview_real_map.py ../map_tools/maps/map7.yaml
 """
 from __future__ import annotations
 

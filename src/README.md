@@ -1,6 +1,6 @@
-# `src/` 目录
+# `src/` 目录（RBCV 工程）
 
-本目录下放可复用代码与说明文档。
+本目录为 **Region-Based Coverage Navigation（RBCV）** 的可运行代码与文档根。
 
 | 子目录 / 文件 | 说明 |
 |----------------|------|
@@ -11,6 +11,7 @@
 | `ROS2终端指令.md` | ROS 2 CLI 备忘 |
 | `requirements.txt` | 全套 Python 依赖（含规划器与示例可视化） |
 | `USAGE.md` | **划分地图 → 覆盖** 端到端操作指南 |
+| `FILES.md` | **仓库文件索引**：每个文件的用途一览 |
 
 进入各子目录查看更细的 README。
 

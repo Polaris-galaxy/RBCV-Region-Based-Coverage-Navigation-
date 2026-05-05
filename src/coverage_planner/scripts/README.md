@@ -1,4 +1,4 @@
-# examples
+# scripts（命令行工具）
 
 按 **操作顺序** 列出。从 `src/coverage_planner` 目录执行。
 
@@ -15,16 +15,16 @@
 cd src/coverage_planner
 
 # 0) 预览地图
-py examples/preview_real_map.py ../map_tools/maps/map7.yaml
+py scripts/preview_real_map.py ../map_tools/maps/map7.yaml
 
 # 1) 交互划分（保存到 map_tools/maps/my_regions.json）
-py examples/draw_regions.py ../map_tools/maps/map7.yaml ../map_tools/maps/my_regions.json
+py scripts/draw_regions.py ../map_tools/maps/map7.yaml ../map_tools/maps/my_regions.json
 
 # 2) 校验对齐
-py examples/preview_regions.py ../map_tools/maps/map7.yaml ../map_tools/maps/my_regions.json
+py scripts/preview_regions.py ../map_tools/maps/map7.yaml ../map_tools/maps/my_regions.json
 
 # 3) r=2.5 m 逐区域覆盖
-py examples/demo_regions.py ../map_tools/maps/map7.yaml 2.5 ../map_tools/maps/my_regions.json
+py scripts/demo_regions.py ../map_tools/maps/map7.yaml 2.5 ../map_tools/maps/my_regions.json
 ```
 
-完整说明见 [`src/USAGE.md`](../../USAGE.md)。
+完整说明见 [`USAGE.md`](../../USAGE.md)（仓库内为 `src/USAGE.md`）。

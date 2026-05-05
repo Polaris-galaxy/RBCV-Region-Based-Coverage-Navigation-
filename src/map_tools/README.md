@@ -1,6 +1,6 @@
-# map_tools
+# map_tools（RBCV 仓库）
 
-**ROS1 catkin 包**：集中存放 **`maps/`**（YAML/PGM/分区 JSON），并提供 Python 桥接与可选 **`/map` 静态发布节点**，与 **`coverage_planner`** 共用同一套地图读写逻辑。
+**ROS1 catkin 包**：集中存放 **`maps/`**（YAML/PGM/分区 JSON），并提供 Python 桥接与可选 **`/map` 静态发布节点**，与同仓库内的 **`coverage_planner`** 共用地图读写逻辑。
 
 ## 目录
 

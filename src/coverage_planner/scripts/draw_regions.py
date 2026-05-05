@@ -2,7 +2,7 @@
 
 用法::
 
-    py examples/draw_regions.py ../map_tools/maps/map7.yaml \
+    py scripts/draw_regions.py ../map_tools/maps/map7.yaml \
         ../map_tools/maps/my_regions.json
 
 操作:
