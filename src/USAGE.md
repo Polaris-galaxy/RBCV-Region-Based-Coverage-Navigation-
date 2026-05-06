@@ -106,10 +106,10 @@ py scripts\preview_regions.py ..\map_tools\maps\map7.yaml ..\map_tools\maps\my_r
 
 | 字段 | 含义 |
 |------|------|
-| `px_in_rect` | 矩形覆盖到的栅格数 |
-| `px_in_rect ∩ free` | 与自由空间相交的栅格数（**= 0 通常说明矩形落在障碍 / 地图外**） |
+| `矩形内像素` | 矩形覆盖到的栅格数 |
+| `可走∩矩形` | 与自由空间相交的栅格数（**= 0 通常说明矩形落在障碍 / 地图外**） |
 
-弹出窗口：左图叠加矩形边框，右图用不同颜色显示 region ID（自动保存到 `scripts/regions_preview.png`）。
+弹出窗口：左图叠加矩形边框，右图用不同颜色显示分区 ID（自动保存到 `scripts/分区叠图预览.png`）。
 
 ---
 
@@ -135,8 +135,8 @@ py scripts\demo_regions.py ..\map_tools\maps\map7.yaml 2.5 ..\map_tools\maps\my_
 
 输出：
 
-- 终端：每个 region 一行，包含 `kind / rect / wratio / |S| / 覆盖率`；
-- 图片：`scripts/regions_result.png`（按 region 上色，每个圆 = 一个 `r = 2.5 m` 检测点）。
+- 终端：每个分区一行（类型、可走像素、形状度量、圆盘数、覆盖率等，中文日志）；
+- 图片：`scripts/分区覆盖结果.png`（按分区分色，每个圆 = 一个 `r = 2.5 m` 检测点）。
 
 ---
 
@@ -150,6 +150,7 @@ from coverage_planner import (
 from coverage_planner.map_io import meters_to_pixels
 
 # 路径与示例脚本一致：工作目录为 src/coverage_planner 时用 ../map_tools/maps/
+# load_ros_map 默认已做 clean_map（闭合弥缝、抹黑封闭中空区等）；需原始栅格时传 apply_clean_map=False
 free, info = load_ros_map("../map_tools/maps/map7.yaml")
 spec = load_regions_json("../map_tools/maps/my_regions.json")
 labels = rasterize_regions(spec, info, free.shape)

@@ -92,7 +92,9 @@ def plan_coverage(
         gmap = preprocess(free_or_gmap, min_corridor=config.min_corridor)
 
     if config.verbose:
-        print(f"[plan] map={gmap.shape}, free={gmap.n_free}, r={config.r}")
+        print(
+            f"[规划] 栅格尺寸={gmap.shape} 可走格数={gmap.n_free} 半径r={config.r}"
+        )
 
     candidates = generate_candidates(
         gmap,
@@ -105,15 +107,17 @@ def plan_coverage(
         random_seed=config.seed,
     )
     if config.verbose:
-        print(f"[plan] candidates: {candidates.shape[0]}")
+        print(f"[规划] 候选点数量: {candidates.shape[0]}")
+
+    if config.verbose:
+        print("[规划] 正在构建覆盖矩阵（候选数较多时可能较耗时）…")
 
     coverage, _free_idx, free_xy = build_coverage(
         gmap, candidates, r=config.r, n_rays=config.n_rays
     )
     if config.verbose:
         print(
-            f"[plan] coverage matrix: shape={coverage.shape} "
-            f"nnz={coverage.nnz}"
+            f"[规划] 覆盖矩阵: 形状={coverage.shape} 非零元={coverage.nnz}"
         )
 
     target_mask = _subsample_targets(
@@ -121,23 +125,23 @@ def plan_coverage(
     )
     if config.verbose:
         print(
-            f"[plan] target |U| (stride={config.target_subsample}) "
-            f"= {int(target_mask.sum())}"
+            f"[规划] 目标点数 |U|（采样步长={config.target_subsample}）"
+            f"={int(target_mask.sum())}"
         )
 
     if config.augment_for_full_cover:
         unreach = find_unreachable_targets(coverage, target_mask)
         if unreach.size > 0:
             if config.verbose:
-                print(f"[plan] {unreach.size} unreachable targets, augmenting ..")
+                print(f"[规划] {unreach.size} 个目标不可达，正在补全候选…")
             candidates, coverage = augment_for_feasibility(
                 gmap, candidates, coverage, free_xy, target_mask,
                 r=config.r, n_rays=config.n_rays, verbose=config.verbose,
             )
             if config.verbose:
                 print(
-                    f"[plan] augmented candidates: {candidates.shape[0]}, "
-                    f"coverage nnz={coverage.nnz}"
+                    f"[规划] 补全后候选数: {candidates.shape[0]}，"
+                    f"覆盖矩阵非零元={coverage.nnz}"
                 )
 
         residual = find_unreachable_targets(coverage, target_mask)
@@ -146,9 +150,9 @@ def plan_coverage(
             target_mask[residual] = False
             if config.verbose:
                 print(
-                    f"[plan] {residual.size} residual hard-unreachable targets "
-                    f"removed (likely rasterization noise, "
-                    f"{100*residual.size/max(1, gmap.n_free):.4f}% of free)"
+                    f"[规划] 剔除 {residual.size} 个残余硬不可达目标"
+                    f"（多为栅格噪声，占可走格"
+                    f"{100*residual.size/max(1, gmap.n_free):.4f}%）"
                 )
 
     selected, n_covered = greedy_set_cover(
@@ -163,16 +167,16 @@ def plan_coverage(
     greedy_size = len(selected)
     if config.verbose:
         print(
-            f"[plan] greedy: |S|={greedy_size}, "
-            f"covered={n_covered}/{target_total} "
-            f"({100*greedy_ratio:.2f}%)"
+            f"[规划] 贪心：圆盘数={greedy_size}，"
+            f"已覆盖={n_covered}/{target_total} "
+            f"（{100*greedy_ratio:.2f}%）"
         )
 
     ils_stats = None
     ils_size = greedy_size
     if config.enable_ils and selected:
         if config.verbose:
-            print(f"[plan] running ILS ...")
+            print("[规划] 正在执行迭代局部搜索（ILS）…")
         selected, ils_stats = ils(
             coverage=coverage,
             target_mask=target_mask,
@@ -194,10 +198,10 @@ def plan_coverage(
         ils_size = len(selected)
         if config.verbose:
             print(
-                f"[plan] ILS: |S|={ils_size} (was {greedy_size}, "
-                f"-{greedy_size-ils_size}, "
-                f"-{100*(greedy_size-ils_size)/max(greedy_size,1):.1f}%) "
-                f"in {ils_stats['elapsed']:.1f}s"
+                f"[规划] 迭代局部搜索：圆盘数={ils_size}（贪心初解 {greedy_size}，"
+                f"减少 {greedy_size-ils_size}，"
+                f"降幅 {100*(greedy_size-ils_size)/max(greedy_size,1):.1f}%），"
+                f"耗时 {ils_stats['elapsed']:.1f} 秒"
             )
 
     final_cover_mask = np.zeros(coverage.shape[1], dtype=bool)

@@ -19,21 +19,25 @@ from coverage_planner.map_io import load_ros_map  # noqa: E402
 
 
 def main(yaml_path: str) -> None:
-    free, info = load_ros_map(yaml_path)
+    free, info = load_ros_map(
+        yaml_path,
+        keep_largest_component=False,
+        clean_map_verbose=True,
+    )
     h, w = free.shape
-    free_count = int(free.sum())
-    free_ratio = free_count / (h * w)
+    cleaned_free = int(free.sum())
     print(
-        f"image       = {info.image_path}\n"
-        f"resolution  = {info.resolution} m/px\n"
-        f"shape       = ({h}, {w}) -> {h*info.resolution:.1f} x {w*info.resolution:.1f} m\n"
-        f"free pixels = {free_count} ({free_ratio*100:.1f}%)\n"
-        f"occ_thresh  = {info.occupied_thresh}\n"
-        f"free_thresh = {info.free_thresh}"
+        f"栅格图像文件 = {info.image_path}\n"
+        f"分辨率       = {info.resolution} 米/像素\n"
+        f"尺寸         = ({h}, {w}) → 约 {h*info.resolution:.1f} × "
+        f"{w*info.resolution:.1f} 米\n"
+        f"清洗后可走像素 = {cleaned_free}（占 {cleaned_free/(h*w)*100:.1f}%）\n"
+        f"占格阈值     = {info.occupied_thresh}\n"
+        f"空闲阈值     = {info.free_thresh}"
     )
 
     img = (free.astype(np.uint8) * 255)
-    out_path = os.path.join(HERE, "real_map_preview.png")
+    out_path = os.path.join(HERE, "地图栅格预览.png")
     try:
         import imageio.v3 as iio
 
@@ -42,7 +46,7 @@ def main(yaml_path: str) -> None:
         from PIL import Image
 
         Image.fromarray(img).save(out_path)
-    print(f"preview saved -> {out_path}")
+    print(f"已保存预览图：{out_path}")
 
 
 if __name__ == "__main__":

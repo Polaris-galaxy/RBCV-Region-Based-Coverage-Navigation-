@@ -224,7 +224,7 @@ def _try_remove_pass(state: SolutionState, verbose: bool = False) -> int:
             state.remove(c)
             removed += 1
     if verbose and removed:
-        print(f"  [LS:remove] -{removed}, |S|={state.size}")
+        print(f"  [局部搜索·删圆] 本轮删除 {removed} 个，当前圆盘数={state.size}")
     return removed
 
 
@@ -311,7 +311,10 @@ def _try_swap_2_for_1(
             break
 
     if verbose and swaps:
-        print(f"  [LS:swap2->1] -{swaps}, |S|={state.size}")
+        print(
+            f"  [局部搜索·二换一] 本轮完成 {swaps} 次，"
+            f"当前圆盘数={state.size}"
+        )
     return swaps
 
 
@@ -475,7 +478,10 @@ def _try_swap_3_for_2(
             break
 
     if verbose and swaps:
-        print(f"  [LS:swap3->2] -{swaps}, |S|={state.size}, attempts={attempts}")
+        print(
+            f"  [局部搜索·三换二] 本轮完成 {swaps} 次，"
+            f"当前圆盘数={state.size}，已尝试三元组={attempts}"
+        )
     return swaps
 
 
@@ -509,7 +515,7 @@ def local_search(
         if state.size == before:
             break
         if verbose:
-            print(f"  [LS:pass {it}] |S|={state.size}")
+            print(f"  [局部搜索·轮次 {it}] 当前圆盘数={state.size}")
     return total
 
 
@@ -540,7 +546,7 @@ def _greedy_repair(state: SolutionState, verbose: bool = False) -> int:
         state.add(best_c)
         added += 1
     if verbose and added:
-        print(f"  [repair] +{added}, |S|={state.size}")
+        print(f"  [可行化修复] 新增 {added} 个圆盘，当前圆盘数={state.size}")
     return added
 
 
@@ -559,8 +565,10 @@ def _perturb_random(
     for c in sel[:k]:
         state.remove(int(c))
     if verbose:
-        print(f"  [perturb-rand] removed {k}, now |S|={state.size}, "
-              f"uncov={state.n_uncovered()}")
+        print(
+            f"  [扰动·随机] 移除 {k} 个圆盘，当前圆盘数={state.size}，"
+            f"未覆盖目标数={state.n_uncovered()}"
+        )
 
 
 def _perturb_block(
@@ -592,9 +600,9 @@ def _perturb_block(
         state.remove(int(c))
     if verbose:
         print(
-            f"  [perturb-block] center=({cy:.0f},{cx:.0f}) "
-            f"half={half:.0f} removed={victims.size}, "
-            f"|S|={state.size}, uncov={state.n_uncovered()}"
+            f"  [扰动·块状] 中心=({cy:.0f},{cx:.0f}) 半边长={half:.0f}，"
+            f"移除 {victims.size} 个，当前圆盘数={state.size}，"
+            f"未覆盖目标数={state.n_uncovered()}"
         )
 
 
@@ -659,15 +667,17 @@ def ils(
     )
     if verbose:
         print(
-            f"[ILS] init |S|={state.size}, "
-            f"feasible={state.is_feasible()}, "
-            f"uncovered={state.n_uncovered()}"
+            f"[迭代局部搜索] 初解：圆盘数={state.size}，"
+            f"可行={'是' if state.is_feasible() else '否'}，"
+            f"未覆盖目标数={state.n_uncovered()}"
         )
     if not state.is_feasible():
         _greedy_repair(state, verbose=verbose)
         if verbose:
-            print(f"[ILS] after init-repair |S|={state.size}, "
-                  f"feasible={state.is_feasible()}")
+            print(
+                f"[迭代局部搜索] 初解修复后：圆盘数={state.size}，"
+                f"可行={'是' if state.is_feasible() else '否'}"
+            )
 
     local_search(
         state, r=r,
@@ -678,7 +688,7 @@ def ils(
     best_indices = state.selected_indices().tolist()
     best_size = state.size
     if verbose:
-        print(f"[ILS] post initial LS |S|={best_size}")
+        print(f"[迭代局部搜索] 首轮局部搜索结束，当前最优圆盘数={best_size}")
 
     no_improve = 0
     history: list[int] = [best_size]
@@ -686,7 +696,7 @@ def ils(
     for it in range(1, max_iter + 1):
         if time_limit is not None and time.time() - t0 > time_limit:
             if verbose:
-                print(f"[ILS] time limit reached")
+                print("[迭代局部搜索] 已达时间上限，停止外层迭代。")
             break
 
         strength = perturb_min + (perturb_max - perturb_min) * (
@@ -720,7 +730,10 @@ def ils(
             best_indices = state.selected_indices().tolist()
             no_improve = 0
             if verbose:
-                print(f"[ILS] iter {it}: NEW BEST |S|={best_size}")
+                print(
+                    f"[迭代局部搜索] 外层第 {it} 轮：更新最优解，"
+                    f"圆盘数={best_size}"
+                )
         else:
             no_improve += 1
             if cur_size > best_size or not state.is_feasible():
@@ -729,7 +742,9 @@ def ils(
 
         if no_improve >= patience:
             if verbose:
-                print(f"[ILS] no improvement in {patience} iters, stop")
+                print(
+                    f"[迭代局部搜索] 连续 {patience} 轮无改进，停止搜索。"
+                )
             break
 
     stats = {

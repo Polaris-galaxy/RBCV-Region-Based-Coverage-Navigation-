@@ -16,6 +16,7 @@
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field, replace
 from typing import Iterable
 
@@ -53,12 +54,38 @@ class PartitionResult:
     """逐区规划合并结果."""
 
     region_plans: list[RegionPlan] = field(default_factory=list)
+    trimmed_points: np.ndarray | None = None
+    trimmed_region_ids: np.ndarray | None = None
+    trim_stats: dict | None = None
 
     @property
     def total_circles(self) -> int:
+        if self.trimmed_points is not None:
+            return int(self.trimmed_points.shape[0])
+        return sum(rp.result.selected_points.shape[0] for rp in self.region_plans)
+
+    @property
+    def raw_total_circles(self) -> int:
+        """精修前各分区独立解之和."""
         return sum(rp.result.selected_points.shape[0] for rp in self.region_plans)
 
     def all_points(self) -> np.ndarray:
+        if self.trimmed_points is not None:
+            return self.trimmed_points
+        return self._concat_region_points()
+
+    def all_region_ids(self) -> np.ndarray:
+        """与 ``all_points()`` 对齐的分区 ID 序列."""
+        if self.trimmed_points is not None and self.trimmed_region_ids is not None:
+            return self.trimmed_region_ids
+        ids: list[int] = []
+        for rp in self.region_plans:
+            n = rp.result.selected_points.shape[0]
+            if n > 0:
+                ids.extend([rp.region_id] * n)
+        return np.asarray(ids, dtype=np.int64)
+
+    def _concat_region_points(self) -> np.ndarray:
         parts = [
             rp.result.selected_points
             for rp in self.region_plans
@@ -77,6 +104,8 @@ def classify_region(
     rect_thresh: float = 0.78,
     open_width_factor: float = 1.0,
     narrow_width_factor: float = 0.6,
+    corridor_aspect_thresh: float = 3.0,
+    corridor_width_thresh: float = 1.5,
     tiny_px: int = 25,
 ) -> RegionShape:
     """根据 ``region_mask`` 与同形状 ``edt_local`` 输出 :class:`RegionShape`.
@@ -108,6 +137,11 @@ def classify_region(
 
     if free_px < tiny_px:
         kind = "tiny"
+    elif (
+        aspect >= corridor_aspect_thresh
+        and width_ratio < corridor_width_thresh
+    ):
+        kind = "corridor"
     elif width_ratio < narrow_width_factor:
         kind = "narrow"
     elif width_ratio >= open_width_factor and rectangularity >= rect_thresh:
@@ -160,7 +194,209 @@ def config_for_kind(base: PlannerConfig, kind: str) -> PlannerConfig:
             random_extra=max(20, min(base.random_extra, 80)),
             enable_ils=False,
         )
+    if kind == "corridor":
+        # 走廊会跳过 plan_coverage 直接沿中轴线放圆, 这里仅给一份保守 fallback
+        # config (若 _plan_corridor_local 失败回退用).
+        return replace(
+            base,
+            use_medial=True,
+            use_hex=False,
+            use_reflex=True,
+            random_extra=min(base.random_extra, 100),
+            enable_ils=False,
+        )
     return replace(base, use_medial=True, use_hex=True, use_reflex=True)
+
+
+def _plan_corridor_local(
+    gmap_local: GridMap,
+    r_px: float,
+    step_factor: float = math.sqrt(3.0),
+    push_into_free: bool = True,
+) -> np.ndarray:
+    """沿走廊中轴线按六边形单行步距 ``√3·r`` 等距放置圆心.
+
+    几何依据:
+        宽度不超过 ``r`` 的单行覆盖, 相邻圆心间距取 ``√3·r`` (约 1.732 r)
+        即可保证整条带状区域被覆盖, 与正六边形蜂窝单行步距一致.
+        宽度更大的走廊也能被等距单行覆盖, 留少量交叠.
+
+    实现:
+        1. 取 ``gmap_local.skeleton`` 上所有像素;
+        2. 用 PCA 主方向把这些点投影到一维弧长;
+        3. 沿一维投影按 ``step = step_factor * r_px`` 等距挑点;
+        4. 可选地把每个点沿 EDT 梯度向自由空间深处微推, 提升单点视距.
+
+    Args:
+        gmap_local: 走廊子图.
+        r_px: 视距半径 (像素).
+        step_factor: 步距系数, 默认 ``√3 ≈ 1.732``.
+        push_into_free: 是否做最后一步 EDT 微推.
+
+    Returns:
+        ``[N, 2]`` int32 圆心 (row, col), 已经在 ``gmap_local`` 局部坐标系内.
+    """
+    from .visibility import _push_into_free as _push
+
+    skel = gmap_local.skeleton
+    if not skel.any():
+        ys, xs = np.where(gmap_local.free)
+        if ys.size == 0:
+            return np.zeros((0, 2), dtype=np.int32)
+        skel_pts = np.stack([ys, xs], axis=1).astype(np.float64)
+    else:
+        ys, xs = np.where(skel)
+        skel_pts = np.stack([ys, xs], axis=1).astype(np.float64)
+
+    if skel_pts.shape[0] == 1:
+        only = skel_pts[0].astype(np.int32)[None, :]
+        return only
+
+    centroid = skel_pts.mean(axis=0)
+    centered = skel_pts - centroid
+    cov = centered.T @ centered
+    _eigvals, eigvecs = np.linalg.eigh(cov)
+    main_dir = eigvecs[:, -1]
+    proj = centered @ main_dir
+
+    order = np.argsort(proj)
+    sorted_pts = skel_pts[order]
+    sorted_proj = proj[order]
+
+    step = max(1.0, float(step_factor) * float(r_px))
+    next_t = sorted_proj[0]
+    out: list[np.ndarray] = []
+    for k, t in enumerate(sorted_proj):
+        if t >= next_t:
+            out.append(sorted_pts[k])
+            next_t = t + step
+    if not out:
+        out.append(sorted_pts[0])
+    pts = np.asarray(out, dtype=np.int32)
+
+    if push_into_free and gmap_local.edt is not None:
+        pts = _push(
+            pts.astype(np.int32),
+            gmap_local.edt.astype(np.float32),
+            gmap_local.free,
+            target_edt=0.45 * float(r_px),
+            max_walk=max(2, int(0.45 * float(r_px))),
+        ).astype(np.int32)
+
+    return pts
+
+
+def globally_trim_solution(
+    free_full: np.ndarray,
+    selected_points: np.ndarray,
+    r_px: float,
+    target_mask_full: np.ndarray | None = None,
+    target_subsample: int = 4,
+    n_rays: int | None = None,
+    max_passes: int = 3,
+    verbose: bool = False,
+) -> tuple[np.ndarray, np.ndarray, dict]:
+    """对合并后的全图解做"全图可见性下的删圆"局部搜索, 削减跨分区冗余.
+
+    与 ``plan_coverage`` 内部 ILS 不同, 这里 visibility / 目标都是 **整图** 的,
+    因此一个分区的圆有可能覆盖到另一分区边缘的目标, 从而允许整体减圆.
+
+    Args:
+        free_full: 整图 ``[H, W]`` bool 自由空间.
+        selected_points: ``[N, 2]`` int32, 合并后的圆心 (row, col).
+        r_px: 视距半径 (像素).
+        target_mask_full: 必须覆盖的整图目标掩码; ``None`` 取 ``free_full``.
+        target_subsample: 目标格步长 (与 :class:`PlannerConfig.target_subsample` 一致).
+        n_rays: 极坐标射线数, ``None`` 走默认.
+        max_passes: 最多反复几轮 try_remove (每轮删一遍).
+        verbose: 打印中文进度.
+
+    Returns:
+        (new_points, keep_index, stats):
+            ``new_points`` 是裁剪后保留的 ``[M, 2]`` 圆心,
+            ``keep_index`` 是它们在 ``selected_points`` 中的下标,
+            ``stats`` 记录前后圆数与裁剪轮次.
+    """
+    from .map_io import GridMap
+    from .planner import _subsample_targets
+    from .refine import SolutionState, _try_remove_pass
+    from .visibility import build_coverage
+
+    n_sel = int(selected_points.shape[0])
+    if n_sel <= 1:
+        keep = np.arange(n_sel, dtype=np.int64)
+        return selected_points.copy(), keep, {
+            "before": n_sel, "after": n_sel, "removed": 0, "passes": 0,
+        }
+
+    if target_mask_full is None:
+        target_mask_full = free_full
+
+    candidates = selected_points.astype(np.int32)
+
+    if verbose:
+        print(
+            f"[全局精修] 在整图自由空间上重建可见性矩阵：候选数={n_sel}，"
+            f"半径 r={r_px:.2f} 像素…"
+        )
+
+    gmap_full = GridMap(
+        free=free_full,
+        edt=np.zeros((1, 1), dtype=np.float32),
+        skeleton=np.zeros((1, 1), dtype=bool),
+        skel_dist=np.zeros((1, 1), dtype=np.float32),
+    )
+    coverage, _free_idx, free_xy = build_coverage(
+        gmap_full, candidates, r=r_px, n_rays=n_rays
+    )
+
+    in_target = target_mask_full[free_xy[:, 0], free_xy[:, 1]]
+    sub_mask = _subsample_targets(free_xy, free_full.shape, target_subsample)
+    base_target = in_target & sub_mask
+
+    selected_idx = list(range(n_sel))
+    state = SolutionState.from_selected(
+        coverage, base_target, candidates, selected_idx
+    )
+
+    actually_covered = state.cover_count > 0
+    state.target_mask = base_target & actually_covered
+
+    if verbose:
+        print(
+            f"[全局精修] 全图目标={int(base_target.sum())}，"
+            f"实际可覆盖={int(state.target_mask.sum())}；开始尝试删圆…"
+        )
+
+    total_removed = 0
+    pass_used = 0
+    for it in range(max_passes):
+        before = state.size
+        rm = _try_remove_pass(state, verbose=False)
+        total_removed += rm
+        pass_used = it + 1
+        if verbose:
+            print(
+                f"[全局精修] 第 {pass_used}/{max_passes} 轮：删除 {rm} 个，"
+                f"当前圆盘数={state.size}"
+            )
+        if rm == 0 or state.size == before:
+            break
+
+    keep = state.selected_indices().astype(np.int64)
+    new_points = candidates[keep].copy()
+    stats = {
+        "before": n_sel,
+        "after": int(keep.size),
+        "removed": total_removed,
+        "passes": pass_used,
+    }
+    if verbose:
+        print(
+            f"[全局精修] 完成：圆盘数 {n_sel} → {keep.size}（共减少 "
+            f"{total_removed} 个）"
+        )
+    return new_points, keep, stats
 
 
 def plan_partitions(
@@ -170,6 +406,9 @@ def plan_partitions(
     base_config: PlannerConfig | None = None,
     region_ids: Iterable[int] | None = None,
     pad_px: int = 4,
+    global_trim: bool = True,
+    trim_target_subsample: int | None = None,
+    trim_max_passes: int = 3,
     verbose: bool = False,
 ) -> PartitionResult:
     """对 ``labels`` 中每个 ``id>=1`` 的分区独立规划并合并解.
@@ -210,11 +449,22 @@ def plan_partitions(
         region_ids = sorted(int(k) for k in region_ids)
 
     h, w = free_full.shape
+    n_regions = sum(
+        1 for rid in region_ids if ((labels == rid) & free_full).any()
+    )
+    progress_i = 0
     out: list[RegionPlan] = []
     for rid in region_ids:
         region_mask_full = (labels == rid) & free_full
         if not region_mask_full.any():
             continue
+
+        progress_i += 1
+        if verbose:
+            print(
+                f"[分区进度] 第 {progress_i}/{n_regions} 个："
+                f"正在规划分区 ID={rid} …"
+            )
 
         ys, xs = np.where(region_mask_full)
         y0 = max(0, int(ys.min()) - pad_px)
@@ -240,12 +490,35 @@ def plan_partitions(
 
         if verbose:
             print(
-                f"[region {rid}] kind={shape.kind} free_px={shape.free_px} "
-                f"bbox={shape.bbox_h}x{shape.bbox_w} rect={shape.rectangularity:.2f} "
-                f"width_ratio={shape.width_ratio:.2f}"
+                f"[分区 {rid}] 类型={shape.kind} 可走像素={shape.free_px} "
+                f"包围盒={shape.bbox_h}×{shape.bbox_w} "
+                f"长方形程度={shape.rectangularity:.2f} "
+                f"宽度比={shape.width_ratio:.2f} "
+                f"长宽比={shape.aspect_ratio:.2f}"
             )
 
-        result = plan_coverage(gmap_local, cfg)
+        if shape.kind == "corridor":
+            corr_pts = _plan_corridor_local(gmap_local, r_px=r_px)
+            if verbose:
+                print(
+                    f"[分区 {rid}] 走廊模式：沿中轴 √3·r 步距生成 "
+                    f"{corr_pts.shape[0]} 个圆心"
+                )
+            free_xy_local = np.argwhere(gmap_local.free).astype(np.int32)
+            result = PlannerResult(
+                gmap=gmap_local,
+                candidates=corr_pts.copy(),
+                selected_indices=list(range(corr_pts.shape[0])),
+                selected_points=corr_pts.astype(np.int32),
+                coverage_ratio=1.0,
+                target_count=int(free_xy_local.shape[0]),
+                target_xy=free_xy_local,
+                greedy_size=corr_pts.shape[0],
+                ils_size=corr_pts.shape[0],
+                ils_stats=None,
+            )
+        else:
+            result = plan_coverage(gmap_local, cfg)
 
         if result.selected_points.shape[0] > 0:
             shifted = result.selected_points.copy()
@@ -271,4 +544,37 @@ def plan_partitions(
 
         out.append(RegionPlan(region_id=rid, shape=shape, config=cfg, result=result))
 
-    return PartitionResult(region_plans=out)
+    partition = PartitionResult(region_plans=out)
+
+    if global_trim and partition.raw_total_circles >= 2:
+        merged_pts = partition._concat_region_points()
+        merged_ids = []
+        for rp in out:
+            n = rp.result.selected_points.shape[0]
+            if n > 0:
+                merged_ids.extend([rp.region_id] * n)
+        merged_ids_arr = np.asarray(merged_ids, dtype=np.int64)
+
+        sub = (
+            trim_target_subsample
+            if trim_target_subsample is not None
+            else base_config.target_subsample
+        )
+        if verbose:
+            print(
+                f"[全局精修] 启动后处理：合并各分区共 {merged_pts.shape[0]} 个圆，"
+                f"准备做整图删圆精修。"
+            )
+        new_pts, keep_idx, stats = globally_trim_solution(
+            free_full=free_full,
+            selected_points=merged_pts,
+            r_px=r_px,
+            target_subsample=sub,
+            max_passes=trim_max_passes,
+            verbose=verbose,
+        )
+        partition.trimmed_points = new_pts.astype(np.int32)
+        partition.trimmed_region_ids = merged_ids_arr[keep_idx]
+        partition.trim_stats = stats
+
+    return partition

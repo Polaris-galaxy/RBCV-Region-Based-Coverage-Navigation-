@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import os
 import sys
-from pathlib import Path
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -33,7 +32,11 @@ def main():
         MAP_TOOLS_MAPS, "regions_map7.example.json"
     )
 
-    free, info = load_ros_map(yaml_path)
+    free, info = load_ros_map(
+        yaml_path,
+        keep_largest_component=False,
+        clean_map_verbose=True,
+    )
     spec = load_regions_json(regions_path)
     labels = rasterize_regions(spec, info, free.shape)
     h, w = free.shape
@@ -41,25 +44,30 @@ def main():
     res = float(info.resolution)
     extent = (ox, ox + w * res, oy, oy + h * res)
 
-    print(f"map = {h}x{w} px, regions = {len(spec.regions)}, "
-          f"frame_id = {spec.frame_id!r}")
+    print(
+        f"地图栅格：{h}×{w} 像素；分区数：{len(spec.regions)}；"
+        f"frame_id = {spec.frame_id!r}"
+    )
     for i, reg in enumerate(spec.regions, start=1):
         in_rect = int((labels == i).sum())
         in_rect_free = int(((labels == i) & free).sum())
         print(
-            f"  R{i} id={reg.id!r}  "
-            f"x=[{reg.xmin:.2f},{reg.xmax:.2f}] y=[{reg.ymin:.2f},{reg.ymax:.2f}] "
-            f"px_in_rect={in_rect}  px_in_rect∩free={in_rect_free}"
+            f"  分区{i} id={reg.id!r}  "
+            f"x=[{reg.xmin:.2f},{reg.xmax:.2f}] "
+            f"y=[{reg.ymin:.2f},{reg.ymax:.2f}]  "
+            f"矩形内像素={in_rect}  可走∩矩形={in_rect_free}"
         )
 
     import matplotlib.pyplot as plt
     from matplotlib.patches import Rectangle
 
     fig, axes = plt.subplots(1, 2, figsize=(16, 8))
-    axes[0].imshow(free.astype(np.uint8), cmap="gray", origin="lower",
-                   extent=extent, interpolation="nearest")
-    axes[0].set_title("regions overlay (orange) on map")
-    axes[0].set_xlabel("x (m)"); axes[0].set_ylabel("y (m)")
+    bg = np.where(free, 255, 0).astype(np.uint8)
+    axes[0].imshow(bg, cmap="gray", vmin=0, vmax=255,
+                   origin="lower", extent=extent, interpolation="nearest")
+    axes[0].set_title("Region overlay (orange = rectangles)")
+    axes[0].set_xlabel("x (m)")
+    axes[0].set_ylabel("y (m)")
     cmap = plt.get_cmap("tab10")
     for i, reg in enumerate(spec.regions):
         c = cmap(i % 10)
@@ -75,14 +83,15 @@ def main():
     show[~free] = -1
     axes[1].imshow(show, cmap="tab20", origin="lower", extent=extent,
                    interpolation="nearest")
-    axes[1].set_title("labels & free (-1=outside any region or obstacle)")
-    axes[1].set_xlabel("x (m)"); axes[1].set_ylabel("y (m)")
+    axes[1].set_title("Labels & free space (-1 = obstacle or outside)")
+    axes[1].set_xlabel("x (m)")
+    axes[1].set_ylabel("y (m)")
     axes[1].set_aspect("equal")
 
-    out_path = os.path.join(HERE, "regions_preview.png")
+    out_path = os.path.join(HERE, "分区叠图预览.png")
     plt.tight_layout()
     plt.savefig(out_path, dpi=150)
-    print(f"saved -> {out_path}")
+    print(f"已保存预览图：{out_path}")
     plt.show()
 
 

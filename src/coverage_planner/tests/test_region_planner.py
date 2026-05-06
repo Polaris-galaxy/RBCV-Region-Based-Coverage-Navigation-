@@ -30,12 +30,25 @@ def test_classify_open_square():
 
 
 def test_classify_narrow_corridor():
+    """长走廊：高长宽比 + 窄宽度 -> corridor."""
     free = np.zeros((40, 80), dtype=bool)
     free[18:22, 2:78] = True
     g = preprocess(free)
     s = classify_region(g.free, g.edt, r_px=10.0, region_id=2)
-    assert s.kind == "narrow"
+    assert s.kind == "corridor"
     assert s.width_ratio < 0.6
+    assert s.aspect_ratio >= 3.0
+
+
+def test_classify_narrow_chunk():
+    """近似方形但通道窄 -> narrow（不会被误判为 corridor）."""
+    free = np.zeros((30, 30), dtype=bool)
+    free[12:18, 3:27] = True
+    free[3:27, 12:18] = True
+    g = preprocess(free)
+    s = classify_region(g.free, g.edt, r_px=10.0, region_id=3)
+    assert s.kind == "narrow"
+    assert s.aspect_ratio < 3.0
 
 
 def test_config_for_kind_open_disables_medial_reflex():

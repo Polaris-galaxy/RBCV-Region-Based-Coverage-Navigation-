@@ -227,6 +227,9 @@ def load_ros_map(
     drop_border_components: bool = True,
     keep_largest_component: bool = True,
     extra_free_threshold: int | None = None,
+    apply_clean_map: bool = True,
+    clean_map_verbose: bool = False,
+    clean_map_options: dict | None = None,
 ) -> tuple[np.ndarray, RosMapInfo]:
     """加载 ROS map_server 风格的 (.yaml + .pgm) 地图.
 
@@ -240,11 +243,18 @@ def load_ros_map(
         yaml_path: ``.yaml`` 路径.
         image_override: 若 YAML 中 ``image`` 字段为绝对路径但本机不存在,
             可手动指定本地 PGM 路径.
-        keep_largest_component: 是否仅保留最大连通自由域. ROS map_server
-            生成的 PGM 中, 地图扫描区外的填充往往也是白色, 启用此项可
-            剔除这些"虚假自由空间".
+        keep_largest_component: 是否在 **地图清洗之后** 仅保留最大连通自由域.
+            若 ``apply_clean_map=True``, 此项在 :func:`clean_map` **之后**
+            执行; 清洗前不会裁剪连通域, 以便识别封闭中空区域.
         extra_free_threshold: 比 ``free_thresh`` 更紧的额外阈值 (像素值,
             0~255). 例如设为 240 后, 仅 240~255 视为真正自由. None=不启用.
+        apply_clean_map: 是否对二值 free 做 :func:`clean_map`（障碍 disk closing
+            弥缝、抹黑封闭区、轻度 free opening）. **默认 True**, 与当前脚本
+            工具链一致; 需原始栅格时传 ``False``.
+        clean_map_verbose: 为 True 时打印 :func:`clean_map` 的中文进度.
+        clean_map_options: 覆盖传给 :func:`clean_map` 的参数
+            (例 ``{"gap_seal_px": 7}``). 默认 ``gap_seal_px=5``,
+            ``free_smooth_iter=1``, ``obstacle_smooth_iter=0``.
 
     Returns:
         (free_mask, info)  free_mask 为 ``[H, W]`` bool, ``info`` 含分辨率等.
@@ -260,6 +270,23 @@ def load_ros_map(
 
     if drop_border_components:
         free = _drop_border_touching_components(free)
+
+    if apply_clean_map:
+        if clean_map_verbose:
+            print(
+                f"[load_ros_map] 清洗前可走像素 = {int(free.sum())} "
+                f"（来自 {info.image_path}）"
+            )
+        opts: dict = {
+            "fill_enclosed": True,
+            "gap_seal_px": 5,
+            "free_smooth_iter": 1,
+            "obstacle_smooth_iter": 0,
+            "verbose": clean_map_verbose,
+        }
+        if clean_map_options:
+            opts.update(clean_map_options)
+        free = clean_map(free, **opts)
 
     if keep_largest_component:
         free = _keep_largest_component(free)
@@ -293,6 +320,201 @@ def load_ros_map_occupancy(
 
 def meters_to_pixels(meters: float, resolution: float) -> float:
     return meters / resolution
+
+
+def clean_map(
+    free: np.ndarray,
+    fill_enclosed: bool = True,
+    gap_seal_px: int = 5,
+    free_smooth_iter: int = 1,
+    obstacle_smooth_iter: int = 0,
+    fill_isolated_below_px: int | None = None,
+    seal_gaps_px: int | None = None,
+    smooth_iter: int | None = None,
+    smooth_px: int | None = None,
+    extra_smooth_iter: int | None = None,
+    fill_isolated_free_below_px: int | None = None,
+    verbose: bool = False,
+) -> np.ndarray:
+    """对二值自由空间做"先识别封闭区, 再轻度平滑"的图像级预处理.
+
+    动机:
+        ROS map_server 出来的 PGM 经常出现两类瑕疵:
+
+        1. 一段几乎闭合的墙体, 因为扫描噪声断了几个像素的小缝, 让本应
+           是 "封闭中空" 的内部 free 区与外部 free 通过缝隙连通; 直接做
+           ``keep_largest_component`` 把不出来.
+        2. 墙体表面有几个像素的毛刺, 让 medial axis / candidate 在那里
+           反复挤压, 检测点重叠.
+
+    流程 (严格按你要的顺序):
+        1. **闭合识别**: 在障碍 ``~free`` 上用 ``disk(gap_seal_px)`` 圆形
+           结构元素做一次 closing, 把所有宽度 ≤ ``2*gap_seal_px`` 像素
+           的缝隙暂时堵上, 让 "几乎闭合" 的轮廓视为真闭合;
+        2. **抹黑**: 在闭合后的图上找自由连通域, 凡是 *不与主自由域相连*
+           的, 一律把它们的 *原始* 像素位置在 ``free`` 上抹黑成障碍.
+           注意此处只读 closing 后的图做识别, 不直接把 closing 后的 free
+           当输出, 因此真实窄通道不会被吃掉.
+        3. **轻度平滑** (``free_smooth_iter`` 次, 默认 1): 在 free 上做
+           opening, 抹平 1~2 个像素的边缘噪声; 不会扩张 free, 因此封闭
+           轮廓不会被打通.
+        4. **再次抹黑**: 平滑可能切出新的孤岛, 全部填实.
+        5. **可选障碍光滑** (``obstacle_smooth_iter`` 次, **默认 0**):
+           在墙体上做 opening, 把墙的毛刺磨平; 默认关闭, 避免上一版本
+           出现的"薄墙被磨断"问题, 仅在确认墙体足够厚时再开.
+
+    Args:
+        free: ``[H, W]`` bool, ``True`` = 自由空间.
+        fill_enclosed: 是否抹黑封闭中空图形, 默认 True.
+        gap_seal_px: 闭合识别用的圆形结构元素 *半径* (像素), 缝隙弥合的
+            最大宽度约为 ``2 * gap_seal_px``. 越大越激进, 太大会把真窄
+            通道也认成封闭轮廓的一部分而吞掉; 默认 5 时, 0.05 m/px 分
+            辨率下能弥合 ~50 cm 以内的扫描断口.
+        free_smooth_iter: free 上 opening 次数 (轻度边缘平滑, 默认 1).
+            想保留更多原图细节就设 0.
+        obstacle_smooth_iter: 障碍 opening 次数 (墙体毛刺平滑, 默认 0).
+            **会让薄墙变薄, 谨慎使用**.
+        fill_isolated_below_px: 兼容旧参数, 仅在你不想用 ``fill_enclosed``
+            而希望按面积阈值过滤时使用.
+        seal_gaps_px / smooth_iter / smooth_px / extra_smooth_iter /
+        fill_isolated_free_below_px: 上一版/上上版的兼容名.
+        verbose: 中文进度.
+
+    Returns:
+        cleaned ``[H, W]`` bool 自由空间.
+    """
+    from scipy.ndimage import (
+        binary_closing,
+        binary_opening,
+        generate_binary_structure,
+        label as cc_label,
+    )
+    from skimage.morphology import disk
+
+    if seal_gaps_px is not None:
+        gap_seal_px = int(seal_gaps_px)
+    if smooth_iter is not None:
+        free_smooth_iter = int(smooth_iter)
+    if smooth_px is not None:
+        free_smooth_iter = int(smooth_px)
+    if extra_smooth_iter is not None:
+        obstacle_smooth_iter = int(extra_smooth_iter)
+    if fill_isolated_free_below_px is not None and fill_isolated_below_px is None:
+        fill_isolated_below_px = int(fill_isolated_free_below_px)
+
+    if free.dtype != bool:
+        free = free.astype(bool)
+
+    out = free.copy()
+    struct = generate_binary_structure(2, 1)
+    before_free = int(out.sum())
+
+    def _identify_non_main_components(mask: np.ndarray) -> tuple[np.ndarray, int, int]:
+        """返回 (non_main_mask, n_dropped, dropped_px) — 全为 False 时表示只有主域."""
+        labels, n_comp = cc_label(mask)
+        if n_comp <= 1:
+            return np.zeros_like(mask, dtype=bool), 0, 0
+        sizes = np.bincount(labels.ravel())
+        sizes[0] = 0
+        keep_label = int(np.argmax(sizes))
+        non_main = (labels > 0) & (labels != keep_label)
+        return non_main, n_comp - 1, int(non_main.sum())
+
+    if fill_enclosed:
+        if gap_seal_px and gap_seal_px > 0:
+            obs = ~out
+            kernel = disk(int(gap_seal_px)).astype(bool)
+            obs_sealed = binary_closing(obs, structure=kernel)
+            free_for_label = ~obs_sealed
+            if verbose:
+                print(
+                    f"[地图清洗] 1) 障碍 closing(disk({gap_seal_px}))：暂时弥合 "
+                    f"≤{2 * gap_seal_px} 像素宽的小缝隙以识别封闭曲线"
+                )
+        else:
+            free_for_label = out
+
+        non_main, n_dropped, dropped_px = _identify_non_main_components(
+            free_for_label
+        )
+        if n_dropped > 0:
+            keep_mask = ~non_main
+            out = out & keep_mask
+            if verbose:
+                print(
+                    f"[地图清洗] 2) 抹黑 {n_dropped} 个封闭中空区域"
+                    f"（共 {dropped_px} 像素，原图位置直接置障）"
+                )
+        elif verbose:
+            print("[地图清洗] 2) 未发现封闭中空区域，跳过抹黑步骤")
+
+    if free_smooth_iter and free_smooth_iter > 0:
+        prev = int(out.sum())
+        out = binary_opening(
+            out, structure=struct, iterations=int(free_smooth_iter)
+        )
+        if verbose:
+            print(
+                f"[地图清洗] 3) 自由域开运算 {free_smooth_iter} 次（轻度平滑）："
+                f"可走像素 {prev} → {int(out.sum())}"
+            )
+
+        if fill_enclosed:
+            non_main, n_dropped, dropped_px = _identify_non_main_components(out)
+            if n_dropped > 0:
+                out = out & ~non_main
+                if verbose:
+                    print(
+                        f"[地图清洗] 4) 平滑后再次抹黑 {n_dropped} 个新孤岛"
+                        f"（{dropped_px} 像素）"
+                    )
+
+    if obstacle_smooth_iter and obstacle_smooth_iter > 0:
+        obs = ~out
+        prev_obs = int(obs.sum())
+        obs = binary_opening(
+            obs, structure=struct, iterations=int(obstacle_smooth_iter)
+        )
+        out = ~obs
+        if verbose:
+            print(
+                f"[地图清洗] 5) 障碍开运算 {obstacle_smooth_iter} 次（墙体光滑）："
+                f"障碍像素 {prev_obs} → {int(obs.sum())}（注意：会让薄墙变薄）"
+            )
+        if fill_enclosed:
+            non_main, n_dropped, dropped_px = _identify_non_main_components(out)
+            if n_dropped > 0:
+                out = out & ~non_main
+                if verbose:
+                    print(
+                        f"[地图清洗] 5.1) 墙体光滑后再次抹黑 {n_dropped} 个新孤岛"
+                        f"（{dropped_px} 像素）"
+                    )
+
+    if fill_isolated_below_px is not None and fill_isolated_below_px > 0:
+        labels, n_comp = cc_label(out)
+        if n_comp > 0:
+            sizes = np.bincount(labels.ravel())
+            sizes[0] = 0
+            keep = sizes >= int(fill_isolated_below_px)
+            keep_mask = keep[labels]
+            removed_px = int((out & ~keep_mask).sum())
+            removed_cnt = int(np.sum((sizes > 0) & ~keep))
+            out = out & keep_mask
+            if verbose and removed_cnt > 0:
+                print(
+                    f"[地图清洗] 6) 额外阈值过滤：填实 {removed_cnt} 个 "
+                    f"<{fill_isolated_below_px}px 的零碎自由片段"
+                    f"（{removed_px} 像素）"
+                )
+
+    if verbose:
+        print(
+            f"[地图清洗] 完成：可走像素 {before_free} → {int(out.sum())} "
+            f"（变化 {int(out.sum()) - before_free:+d}）"
+        )
+
+    return out.astype(bool)
 
 
 def preprocess(free: np.ndarray, min_corridor: float = 1.0) -> GridMap:

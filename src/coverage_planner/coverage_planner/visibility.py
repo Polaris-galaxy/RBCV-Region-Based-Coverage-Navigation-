@@ -22,18 +22,26 @@ from scipy.sparse import csr_matrix, vstack as sp_vstack
 from .map_io import GridMap
 
 
-def _visible_disk(
+def visible_disk(
     free: np.ndarray,
     cy: int,
     cx: int,
     r: float,
-    n_rays: int,
+    n_rays: int | None = None,
 ) -> np.ndarray:
     """从 ``(cy, cx)`` 出发计算半径 ``r`` 内的可见像素布尔图 (局部裁剪)。
 
     返回 ``[H, W]`` bool, 与 ``free`` 等大;
     ``True`` 仅出现在以 ``(cy, cx)`` 为中心、半径 ``r`` 的方框内。
+
+    Args:
+        free: 整图 ``[H, W]`` bool 自由空间.
+        cy, cx: 圆心像素坐标.
+        r: 视距半径 (像素).
+        n_rays: 极坐标扫描射线数, 默认 ``ceil(2*pi*r)``.
     """
+    if n_rays is None:
+        n_rays = max(64, int(math.ceil(2.0 * math.pi * r)))
     h, w = free.shape
     vis = np.zeros((h, w), dtype=bool)
 
@@ -112,7 +120,7 @@ def build_coverage(
     for cy, cx in candidates:
         cy = int(cy)
         cx = int(cx)
-        vis = _visible_disk(free, cy, cx, r, n_rays)
+        vis = visible_disk(free, cy, cx, r, n_rays)
         if not vis.any():
             indptr.append(indptr[-1])
             continue
@@ -239,7 +247,7 @@ def augment_for_feasibility(
         n_unreach = int(unreachable.sum())
         if n_unreach == 0:
             if verbose and it == 0:
-                print("[augment] all targets reachable, nothing to do")
+                print("[补全候选] 全部目标均可被现有候选覆盖，无需补全。")
             break
 
         uy = free_xy[unreachable, 0]
@@ -261,9 +269,9 @@ def augment_for_feasibility(
 
         if verbose:
             print(
-                f"[augment] iter {it}: {n_unreach} unreachable -> "
-                f"+{pts.shape[0]} candidates (dedup={cur_dedup:.1f}, "
-                f"push={push_into_free})"
+                f"[补全候选] 第 {it + 1} 轮：{n_unreach} 个目标暂不可达 → "
+                f"新增 {pts.shape[0]} 个候选（去重半径={cur_dedup:.1f}，"
+                f"向自由空间深处推移={'开' if push_into_free else '关'}）"
             )
 
         new_cov, _free_idx, _free_xy = build_coverage(

@@ -58,10 +58,12 @@ def main():
     free, info = load_ros_map(yaml_path)
     h, w = free.shape
     extent = _build_extent(free, info)
-    print(f"[draw] map: {h}x{w} px @ {info.resolution} m/px")
-    print(f"[draw] map bounds (m): x=[{extent[0]:.2f}, {extent[1]:.2f}] "
-          f"y=[{extent[2]:.2f}, {extent[3]:.2f}]")
-    print(f"[draw] save target: {save_path}")
+    print(f"[划区] 地图：{h}×{w} 像素，分辨率 {info.resolution} 米/像素")
+    print(
+        f"[划区] 地图范围（米）：x∈[{extent[0]:.2f}, {extent[1]:.2f}]  "
+        f"y∈[{extent[2]:.2f}, {extent[3]:.2f}]"
+    )
+    print(f"[划区] 将保存到：{save_path}")
 
     import matplotlib.pyplot as plt
     from matplotlib.patches import Rectangle
@@ -72,10 +74,10 @@ def main():
         free.astype(np.uint8),
         cmap="gray", origin="lower", extent=extent, interpolation="nearest",
     )
-    ax.set_xlabel("x (m)")
-    ax.set_ylabel("y (m)")
+    ax.set_xlabel("x（米）")
+    ax.set_ylabel("y（米）")
     ax.set_aspect("equal")
-    ax.set_title("draw regions: drag=add, u=undo, r=clear, s=save, q=quit")
+    ax.set_title("交互划区：拖框添加，u撤销，r清空，n设下一id，s保存，q退出")
 
     state = {
         "regions": [],          # list[dict(id,xmin,ymin,xmax,ymax)]
@@ -124,26 +126,26 @@ def main():
             {"id": rid, "xmin": x0, "ymin": y0, "xmax": x1, "ymax": y1}
         )
         state["next_id"] = ""
-        print(f"[draw] + {rid}: x=[{x0:.2f},{x1:.2f}] y=[{y0:.2f},{y1:.2f}]")
+        print(f"[划区] + {rid}：x=[{x0:.2f},{x1:.2f}] y=[{y0:.2f},{y1:.2f}]")
         _redraw_legend()
 
     def on_key(event):
         if event.key == "u":
             if state["regions"]:
                 rem = state["regions"].pop()
-                print(f"[draw] - {rem['id']}")
+                print(f"[划区] - {rem['id']}")
                 _redraw_legend()
         elif event.key == "r":
             state["regions"].clear()
-            print("[draw] cleared")
+            print("[划区] 已清空全部矩形")
             _redraw_legend()
         elif event.key == "n":
             try:
-                rid = input("next region id (回车=自动): ").strip()
+                rid = input("下一个分区 id（回车=自动编号）: ").strip()
             except EOFError:
                 rid = ""
             state["next_id"] = rid
-            print(f"[draw] next id = {rid or '(auto)'}")
+            print(f"[划区] 下一 id = {rid or '（自动）'}")
         elif event.key == "s":
             payload = {
                 "frame_id": "map",
@@ -153,7 +155,7 @@ def main():
                 json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
                 encoding="utf-8",
             )
-            print(f"[draw] saved {len(state['regions'])} regions -> {save_path}")
+            print(f"[划区] 已保存 {len(state['regions'])} 个分区 → {save_path}")
         elif event.key == "q":
             plt.close(fig)
 
@@ -167,7 +169,10 @@ def main():
     )
     fig.canvas.mpl_connect("key_press_event", on_key)
 
-    print("[draw] keys: drag=add, u=undo, r=clear, n=set next id, s=save, q=quit")
+    print(
+        "[划区] 按键：拖框=添加矩形，u=撤销，r=清空，"
+        "n=指定下一 id，s=保存，q=退出"
+    )
     plt.show()
     _ = selector
 

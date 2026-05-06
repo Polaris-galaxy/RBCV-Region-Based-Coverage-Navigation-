@@ -79,7 +79,7 @@
 | `preview_real_map.py` | 打印地图统计并保存自由空间预览 PNG |
 | `draw_regions.py` | **交互**：鼠标拖框 → 保存分区 JSON |
 | `preview_regions.py` | **校验**：分区 JSON 叠加地图并保存预览 PNG |
-| `demo_regions.py` | **端到端**：逐分区自适应覆盖，`regions_result.png` |
+| `demo_regions.py` | **端到端**：逐分区自适应覆盖，`分区覆盖结果.png` |
 
 ### `coverage_planner/docs/`（算法文档）
 
@@ -120,8 +120,8 @@
 
 | 典型路径 | 来源 |
 |----------|------|
-| `src/coverage_planner/scripts/regions_preview.png` | `preview_regions.py` |
-| `src/coverage_planner/scripts/regions_result.png` | `demo_regions.py` |
-| `src/coverage_planner/scripts/real_map_preview.png` | `preview_real_map.py` |
+| `src/coverage_planner/scripts/分区叠图预览.png` | `preview_regions.py` |
+| `src/coverage_planner/scripts/分区覆盖结果.png` | `demo_regions.py` |
+| `src/coverage_planner/scripts/地图栅格预览.png` | `preview_real_map.py` |
 
 你在本地新建的 **`my_regions.json`** 建议放在 `src/map_tools/maps/` 并与示例分区路径一致。

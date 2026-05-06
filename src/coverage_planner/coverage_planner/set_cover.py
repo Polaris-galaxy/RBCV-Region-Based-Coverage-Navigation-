@@ -123,8 +123,8 @@ def greedy_set_cover(
         if verbose and len(selected) % 20 == 0:
             pct = 100.0 * n_covered_target / target_total
             print(
-                f"[set_cover] picked={len(selected)} "
-                f"covered={n_covered_target}/{target_total} ({pct:.1f}%)"
+                f"[贪心覆盖] 进度：已选圆盘 {len(selected)} 个，"
+                f"已覆盖目标 {n_covered_target}/{target_total}（{pct:.1f}%）"
             )
 
     return selected, n_covered_target
