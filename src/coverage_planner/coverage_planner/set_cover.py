@@ -42,6 +42,7 @@ def greedy_set_cover(
     coverage_ratio: float = 1.0,
     max_picks: int | None = None,
     overlap_tiebreak: bool = True,
+    tiebreak_priority: np.ndarray | None = None,
     verbose: bool = False,
 ) -> tuple[list[int], int]:
     """贪心选取候选, 直到 (覆盖率达标 / 候选耗尽 / 达到 max_picks)。
@@ -55,6 +56,9 @@ def greedy_set_cover(
         overlap_tiebreak: 当多个候选新增覆盖相同时, 优先选与已覆盖区域
             重叠最少的 (减少边缘 / 交叉口处的密集叠加)。不影响最终覆
             盖率, 仅作 tie-breaker.
+        tiebreak_priority: 长度 N 的非负数组, **数值越大越优先** (例如圆心处
+            欧氏距离变换 EDT)。在 ``new_cnt`` 与 (若启用) ``overlap`` 均
+            相同时作为第三级键; ``None`` 表示不使用.
         verbose: 打印进度。
 
     Returns:
@@ -65,6 +69,16 @@ def greedy_set_cover(
         target_mask = np.ones(m, dtype=bool)
     elif target_mask.dtype != bool:
         target_mask = target_mask.astype(bool)
+
+    if tiebreak_priority is not None:
+        tp = np.asarray(tiebreak_priority, dtype=np.float64).ravel()
+        if tp.shape[0] != n:
+            raise ValueError(
+                "tiebreak_priority length must match number of candidates "
+                f"n={n}, got {tp.shape[0]}"
+            )
+    else:
+        tp = None
 
     target_total = int(target_mask.sum())
     if target_total == 0:
@@ -78,6 +92,9 @@ def greedy_set_cover(
     indptr = coverage.indptr
     indices = coverage.indices
 
+    def prio_for(i: int) -> float:
+        return float(tp[i]) if tp is not None else 0.0
+
     def stats_of(i: int) -> tuple[int, int]:
         """returns (new_covered, overlap_with_already_covered)."""
         s, e = indptr[i], indptr[i + 1]
@@ -90,26 +107,40 @@ def greedy_set_cover(
         ov_cnt = int((in_target & cov_here).sum())
         return new_cnt, ov_cnt
 
-    heap: list[tuple[int, int, int]] = []
+    heap: list[tuple[int, int, float, int]] = []
     for i in range(n):
         new_cnt, ov_cnt = stats_of(i)
         if new_cnt > 0:
-            heapq.heappush(heap, (-new_cnt, ov_cnt if overlap_tiebreak else 0, i))
+            pri = prio_for(i)
+            heapq.heappush(
+                heap,
+                (-new_cnt, ov_cnt if overlap_tiebreak else 0, -pri, i),
+            )
 
     while heap and n_covered_target < target_required:
         if max_picks is not None and len(selected) >= max_picks:
             break
 
-        neg_g, stale_ov, i = heapq.heappop(heap)
+        neg_g, stale_ov, stale_neg_pri, i = heapq.heappop(heap)
         if -neg_g <= 0:
             break
         cur_new, cur_ov = stats_of(i)
         if cur_new == 0:
             continue
+        cur_pri = prio_for(i)
+        cur_neg_pri = -cur_pri
         if cur_new < -neg_g or (
             overlap_tiebreak and cur_new == -neg_g and cur_ov > stale_ov
+        ) or (
+            tp is not None
+            and cur_new == -neg_g
+            and (not overlap_tiebreak or cur_ov == stale_ov)
+            and cur_neg_pri > stale_neg_pri
         ):
-            heapq.heappush(heap, (-cur_new, cur_ov if overlap_tiebreak else 0, i))
+            heapq.heappush(
+                heap,
+                (-cur_new, cur_ov if overlap_tiebreak else 0, -cur_pri, i),
+            )
             continue
 
         s, e = indptr[i], indptr[i + 1]

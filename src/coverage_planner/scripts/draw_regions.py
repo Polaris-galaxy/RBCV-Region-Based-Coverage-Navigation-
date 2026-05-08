@@ -32,6 +32,7 @@ sys.path.insert(0, ROOT)
 import numpy as np  # noqa: E402
 
 from coverage_planner.map_io import load_ros_map  # noqa: E402
+from coverage_planner.mpl_zh import configure_matplotlib_chinese_font  # noqa: E402
 
 
 def _build_extent(free: np.ndarray, info) -> tuple[float, float, float, float]:
@@ -66,18 +67,35 @@ def main():
     print(f"[划区] 将保存到：{save_path}")
 
     import matplotlib.pyplot as plt
+    from matplotlib.font_manager import FontProperties
     from matplotlib.patches import Rectangle
     from matplotlib.widgets import RectangleSelector
+
+    applied_name, applied_path = configure_matplotlib_chinese_font()
+    if applied_path:
+        print(f"[划区] Matplotlib 中文字体: {applied_name}（{applied_path}）")
+        _fp = FontProperties(fname=applied_path)
+    elif applied_name and applied_name.lower() not in (
+        "sans-serif", "serif", "monospace", "cursive", "fantasy", "default"
+    ):
+        print(f"[划区] Matplotlib 中文字体: {applied_name}")
+        _fp = FontProperties(family=applied_name)
+    else:
+        print("[划区] Matplotlib: 未解析到系统字体文件，使用默认 FontProperties")
+        _fp = FontProperties()
 
     fig, ax = plt.subplots(figsize=(11, 11))
     ax.imshow(
         free.astype(np.uint8),
         cmap="gray", origin="lower", extent=extent, interpolation="nearest",
     )
-    ax.set_xlabel("x（米）")
-    ax.set_ylabel("y（米）")
+    ax.set_xlabel("x (m)", fontsize=11)
+    ax.set_ylabel("y (m)", fontsize=11)
     ax.set_aspect("equal")
-    ax.set_title("交互划区：拖框添加，u撤销，r清空，n设下一id，s保存，q退出")
+    zh_title = "交互划区：拖动添加矩形 / u撤销 / r清空 / n指定下一分区id / s保存JSON / q退出（未保存会丢失）"
+    ax.set_title(zh_title, fontsize=11, pad=10, fontproperties=_fp)
+    ax.xaxis.label.set_fontproperties(_fp)
+    ax.yaxis.label.set_fontproperties(_fp)
 
     state = {
         "regions": [],          # list[dict(id,xmin,ymin,xmax,ymax)]

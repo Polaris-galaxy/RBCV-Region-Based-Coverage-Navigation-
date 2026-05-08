@@ -33,7 +33,7 @@ Free  ⊆  ⋃_i ( Disk(p_i, r) ∩ Visible(p_i) )
               │
               ├──► 贪心 Set Cover（lazy max-heap）
               │
-              └──► 局部精修（2-opt + 连续微调，可选）
+              └──► 局部精修（ILS：try_remove / 2换1 / 3换2 + 扰动修复）
 ```
 
 ## 3. 目录结构
@@ -46,11 +46,11 @@ coverage_planner/
 ├── coverage_planner/          主 Python 包
 │   ├── map_io.py              栅格地图加载与预处理（距离场、中轴）
 │   ├── region_io.py           长方形分区 JSON → labels 掩码（与 ROS 地图对齐）
-│   ├── region_planner.py      逐分区自适应规划（open / narrow / mixed / tiny）
+│   ├── region_planner.py      逐分区自适应规划（open / narrow / mixed / tiny / corridor）+ 并行规划 + 全局精修
 │   ├── candidates.py          候选观测点生成（六边形 / 中轴 / 反射顶点 / 随机）
 │   ├── visibility.py          栅格可见性 + 圆盘裁剪 + 覆盖矩阵
 │   ├── set_cover.py           贪心 Set Cover（含 overlap_tiebreak）
-│   ├── refine.py              ILS 局部精修
+│   ├── refine.py              ILS 局部精修（try_remove / swap_2_for_1 / swap_3_for_2）
 │   ├── planner.py             顶层 DGR 流水线
 │   └── viz.py                 可视化辅助
 ├── scripts/                   见 scripts/README.md（命令行工具）
@@ -80,18 +80,23 @@ py scripts/preview_regions.py ../map_tools/maps/map7.yaml ../map_tools/maps/my_r
 py scripts/demo_regions.py    ../map_tools/maps/map7.yaml 2.5 ../map_tools/maps/my_regions.json
 ```
 
+提示：
+
+- 并行后端（thread/process）、一键最优（`RBCV_BEST=1`）、软目标参数（`RBCV_SOFT_FACTOR` 等）详见 [`../USAGE.md`](../USAGE.md)。
+- 本实现为 **纯 CPU** 计算，未使用 GPU。
+
 ## 6. 当前实现状态
 
 | 模块 | 状态 |
 |---|---|
 | `map_io.py`         | ✅ 栅格加载 + EDT + 中轴 |
 | `region_io.py`      | ✅ 长方形分区 JSON + 栅格化 |
-| `region_planner.py` | ✅ 形状分类 + 逐区自适应规划 |
+| `region_planner.py` | ✅ 形状分类 + 逐区自适应规划 + 并行规划 + 全局精修 |
 | `candidates.py`     | ✅ 中轴自适应 + 六边形 + 反射顶点 |
 | `visibility.py`     | ✅ 栅格光线遮挡 + 圆盘裁剪 |
 | `set_cover.py`      | ✅ lazy heap 贪心 + overlap tiebreak |
 | `planner.py`        | ✅ 端到端 DGR 主流程 |
-| `refine.py`         | ✅ ILS 局部精修 |
+| `refine.py`         | ✅ ILS 局部精修（try_remove / 2换1 / 3换2） |
 | `viz.py`            | ✅ 结果可视化 |
 | `partition.py`      | ⏳ TODO（自动区域分解；手工分区见 `region_io` / `region_planner`） |
 

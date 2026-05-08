@@ -27,4 +27,5 @@ py scripts/preview_regions.py ../map_tools/maps/map7.yaml ../map_tools/maps/my_r
 py scripts/demo_regions.py ../map_tools/maps/map7.yaml 2.5 ../map_tools/maps/my_regions.json
 ```
 
-完整说明见 [`USAGE.md`](../../USAGE.md)（仓库内为 `src/USAGE.md`）。
+运行时会在本目录生成预览 PNG（已在仓库根 `.gitignore` 忽略，需时重新运行脚本即可）：
+`地图栅格预览.png`、`分区叠图预览.png`、`分区覆盖结果.png`。

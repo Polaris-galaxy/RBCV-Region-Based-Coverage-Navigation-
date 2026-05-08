@@ -61,8 +61,23 @@ def test_empty_target():
     assert n_cov == 0
 
 
+def test_edt_tiebreak_prefers_higher_priority():
+    """同增益、同重叠时选 tiebreak_priority 更大的行."""
+    A = make_matrix([[0], [0]])
+    pri = np.array([1.0, 100.0], dtype=np.float64)
+    sel, n_cov = greedy_set_cover(
+        A,
+        coverage_ratio=1.0,
+        overlap_tiebreak=True,
+        tiebreak_priority=pri,
+    )
+    assert n_cov == 1
+    assert sel == [1]
+
+
 if __name__ == "__main__":
     test_simple_cover_full()
     test_partial_cover()
     test_empty_target()
+    test_edt_tiebreak_prefers_higher_priority()
     print("ok")

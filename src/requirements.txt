@@ -3,4 +3,5 @@ scipy>=1.10
 scikit-image>=0.21
 matplotlib>=3.7
 imageio>=2.31
+numba>=0.59
 pytest>=7.0

@@ -306,6 +306,8 @@ def generate_candidates(
     use_medial: bool = True,
     use_hex: bool = True,
     use_reflex: bool = True,
+    medial_max_edt_factor: float | None = None,
+    hex_min_room_radius_factor: float | None = None,
     dedup_radius: float | None = None,
     reflex_inset_factor: float = 0.4,
     reflex_sparse_factor: float = 0.5,
@@ -321,6 +323,10 @@ def generate_candidates(
         alpha: 中轴步长安全系数 (0~1).
         use_medial / use_hex / use_reflex: 是否启用对应来源.
         dedup_radius: 去重最小间距, 默认 ``0.4*r``.
+        medial_max_edt_factor: 若设置, 仅保留 ``edt <= factor * r`` 的中轴点
+            （大厅中心 EDT 高处的中轴不参与，让给六边形）。
+        hex_min_room_radius_factor: 若设置, ``hex_candidates`` 使用 ``factor * r`` 作
+            ``min_room_radius``, 略高于默认 0.5 可把六边形更推向开阔核。
         random_extra: 额外随机候选数 (>0 时启用).
         random_min_clearance: 随机候选要求 ``edt >= 该值`` , 默认 ``0.3*r``.
         random_seed: 随机种子.
@@ -335,9 +341,22 @@ def generate_candidates(
 
     parts: list[np.ndarray] = []
     if use_medial:
-        parts.append(medial_candidates(gmap, r, alpha=alpha))
+        med = medial_candidates(gmap, r, alpha=alpha)
+        if (
+            med.shape[0] > 0
+            and medial_max_edt_factor is not None
+        ):
+            cap = float(medial_max_edt_factor) * float(r)
+            yy = med[:, 0]
+            xx = med[:, 1]
+            keep = gmap.edt[yy, xx] <= cap
+            med = med[keep]
+        parts.append(med)
     if use_hex:
-        parts.append(hex_candidates(gmap, r))
+        min_rr = None
+        if hex_min_room_radius_factor is not None:
+            min_rr = float(hex_min_room_radius_factor) * float(r)
+        parts.append(hex_candidates(gmap, r, min_room_radius=min_rr))
     if use_reflex:
         parts.append(reflex_candidates(
             gmap, r,

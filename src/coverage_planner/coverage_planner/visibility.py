@@ -15,11 +15,55 @@
 from __future__ import annotations
 
 import math
+import os
 
 import numpy as np
 from scipy.sparse import csr_matrix, vstack as sp_vstack
 
 from .map_io import GridMap
+
+_NUMBA_VISIBLE: bool = False
+_visible_disk_numba = None
+
+
+def _use_numba_for_visible_disk() -> bool:
+    v = os.environ.get("COVERAGE_PLANNER_USE_NUMBA", "1").strip().lower()
+    return v not in ("0", "false", "no", "off")
+
+
+try:
+    import numba as nb
+
+    # OOB rays are not permanently blocked — matches ndarray 版本中 in_bounds & active 语义.
+    @nb.njit(cache=True, fastmath=True)
+    def _visible_disk_numba(
+        free_u8: np.ndarray,
+        yi_all: np.ndarray,
+        xi_all: np.ndarray,
+        n_k: int,
+        n_rays: int,
+        h: int,
+        w: int,
+    ) -> np.ndarray:
+        vis = np.zeros((h, w), dtype=np.uint8)
+        blocked = np.zeros(n_rays, dtype=np.uint8)
+        for k in range(n_k):
+            for j in range(n_rays):
+                if blocked[j]:
+                    continue
+                yy = yi_all[k, j]
+                xx = xi_all[k, j]
+                if yy < 0 or yy >= h or xx < 0 or xx >= w:
+                    continue
+                if free_u8[yy, xx] == 0:
+                    blocked[j] = 1
+                    continue
+                vis[yy, xx] = 1
+        return vis
+
+    _NUMBA_VISIBLE = True
+except ImportError:
+    pass
 
 
 def visible_disk(
@@ -61,6 +105,12 @@ def visible_disk(
 
     yi_all = np.round(ys_all).astype(np.int32)
     xi_all = np.round(xs_all).astype(np.int32)
+
+    if _NUMBA_VISIBLE and _visible_disk_numba is not None and _use_numba_for_visible_disk():
+        free_u8 = free.astype(np.uint8)
+        n_k = yi_all.shape[0]
+        vis_nb = _visible_disk_numba(free_u8, yi_all, xi_all, n_k, n_rays, h, w)
+        return vis_nb.astype(bool)
 
     in_bounds = (yi_all >= 0) & (yi_all < h) & (xi_all >= 0) & (xi_all < w)
 

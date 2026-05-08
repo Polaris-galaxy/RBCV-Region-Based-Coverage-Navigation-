@@ -62,13 +62,14 @@
 | `__init__.py` | 懒加载导出公共 API |
 | `map_io.py` | 栅格加载、`load_ros_map`、`load_ros_map_occupancy`、EDT、中轴、`GridMap` |
 | `region_io.py` | 分区 JSON → `labels` 掩码；与 ROS 地图原点/分辨率对齐 |
-| `region_planner.py` | 按分区形状分类（open/narrow/mixed/tiny）；`plan_partitions` |
+| `region_planner.py` | 分区形状分类、`plan_partitions`（并行规划、全局 ILS/软目标） |
 | `candidates.py` | 候选点：六边形、中轴行走、反射顶点、随机 |
 | `visibility.py` | 射线可见性、覆盖稀疏矩阵、`augment_for_feasibility` |
 | `set_cover.py` | 贪心 Set Cover（含 `overlap_tiebreak`） |
 | `refine.py` | ILS 局部搜索精修 |
 | `planner.py` | `PlannerConfig`、`plan_coverage` 顶层流水线 |
 | `viz.py` | Matplotlib 结果可视化 |
+| `mpl_zh.py` | Matplotlib 注册/选择中文字体（划区等脚本用，避免 Windows 乱码） |
 | `README.md` | 子模块文件索引 |
 
 ### `coverage_planner/scripts/`（命令行工具）
@@ -116,7 +117,7 @@
 
 ## 运行时生成的文件（通常不入库）
 
-下列由脚本生成，若出现在目录中可被 `.gitignore` 忽略：
+下列由脚本生成，**建议不入库**（已在根目录 `.gitignore` 中忽略）：
 
 | 典型路径 | 来源 |
 |----------|------|
@@ -124,4 +125,4 @@
 | `src/coverage_planner/scripts/分区覆盖结果.png` | `demo_regions.py` |
 | `src/coverage_planner/scripts/地图栅格预览.png` | `preview_real_map.py` |
 
-你在本地新建的 **`my_regions.json`** 建议放在 `src/map_tools/maps/` 并与示例分区路径一致。
+本地新建的 **`my_regions.json`** 建议放在 `src/map_tools/maps/` 并与示例分区路径一致。

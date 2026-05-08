@@ -43,6 +43,7 @@ __all__ = [
     "config_for_kind",
     "plan_partitions",
     "globally_trim_solution",
+    "globally_optimize_solution",
 ]
 
 _LAZY: dict[str, str] = {
@@ -80,6 +81,7 @@ _LAZY: dict[str, str] = {
     "config_for_kind": "coverage_planner.region_planner",
     "plan_partitions": "coverage_planner.region_planner",
     "globally_trim_solution": "coverage_planner.region_planner",
+    "globally_optimize_solution": "coverage_planner.region_planner",
 }
 
 

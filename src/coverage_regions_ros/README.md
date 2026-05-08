@@ -2,6 +2,11 @@
 
 **ROS Noetic** 下可选功能包：订阅 `OccupancyGrid`（默认 `/map`），读取 **长方形分区 JSON**，发布与地图对齐的分区标签栅格。
 
+该包的定位：
+
+- 离线端：`coverage_planner` 负责“分区 → 覆盖点”规划（无需 ROS）。
+- 在线端：本包把同一份分区 JSON 栅格化为 `OccupancyGrid`（labels），便于下游节点在 ROS 中对齐分区。
+
 > **当前**：可先只看文档与脚本；不必在本机编译 ROS，后续在 Ubuntu catkin 工作空间中 `catkin_make` / `catkin build` 即可。
 
 ## 目录

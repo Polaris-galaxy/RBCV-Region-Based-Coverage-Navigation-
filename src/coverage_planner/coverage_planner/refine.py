@@ -11,16 +11,22 @@
 实现的邻域算子:
     1. ``try_remove(c)``        删 c 后仍可行 -> 接受
     2. ``swap_2_for_1``         相邻 2 个删, 替换为 1 个 -> 净减 1
-    (3. ``swap_3_for_2``         留作扩展, 当前默认关闭以控时间)
+    3. ``swap_3_for_2``         相邻 3 个删, 替换为 2 个 -> 净减 1 (可关)
 
 主循环:
     repeat:
-        local_search 直到无改进
+        local_search 直到无改进 (try_remove → swap2 → try_remove → swap3 → try_remove)
         if 无整体改进 cnt >= patience: break
-        perturb (随机删 m, 修复贪心)
+        perturb (随机/块状删 m, lazy-heap 贪心修复)
+
+加速优化:
+    * ``_greedy_repair`` 改 lazy max-heap O(N log N) (旧实现每次 while 都 O(N²)).
+    * ``local_search`` 在每次 swap 之后立即再做一次 ``try_remove`` —— swap_2_for_1
+      新加入的 ``c'`` 可能让其他相邻圆变得可删, 同轮内吃掉这部分收益.
 """
 from __future__ import annotations
 
+import heapq
 import random
 import time
 from dataclasses import dataclass, field
@@ -494,24 +500,36 @@ def local_search(
     swap3_max_attempts: int | None = 100000,
     verbose: bool = False,
 ) -> int:
-    """交替执行 try_remove / swap_2_for_1 / swap_3_for_2 直到无改进."""
+    """交替执行 try_remove / swap_2_for_1 / swap_3_for_2 直到无改进.
+
+    每轮顺序: ``try_remove → swap2 → try_remove → swap3 → try_remove``.
+    swap 之后立刻 ``try_remove`` 是为了吃掉 swap 引入的"新加入候选 c'"
+    对邻接圆产生的可删机会 —— 否则得等下一轮才能利用.
+    """
     total = 0
     for it in range(max_passes):
         before = state.size
-        rm = _try_remove_pass(state, verbose=verbose)
-        sw2 = (
-            _try_swap_2_for_1(state, r=r, verbose=verbose)
-            if enable_swap2
-            else 0
-        )
+        rm1 = _try_remove_pass(state, verbose=verbose)
+
+        sw2 = 0
+        rm_after_sw2 = 0
+        if enable_swap2:
+            sw2 = _try_swap_2_for_1(state, r=r, verbose=verbose)
+            if sw2 > 0:
+                rm_after_sw2 = _try_remove_pass(state, verbose=verbose)
+
         sw3 = 0
-        if enable_swap3 and (rm + sw2) == 0:
+        rm_after_sw3 = 0
+        if enable_swap3 and (rm1 + sw2 + rm_after_sw2) == 0:
             sw3 = _try_swap_3_for_2(
                 state, r=r,
                 max_attempts=swap3_max_attempts,
                 verbose=verbose,
             )
-        total += rm + sw2 + sw3
+            if sw3 > 0:
+                rm_after_sw3 = _try_remove_pass(state, verbose=verbose)
+
+        total += rm1 + sw2 + rm_after_sw2 + sw3 + rm_after_sw3
         if state.size == before:
             break
         if verbose:
@@ -520,31 +538,54 @@ def local_search(
 
 
 def _greedy_repair(state: SolutionState, verbose: bool = False) -> int:
-    """若存在未覆盖目标, 用一次贪心从未选候选中补齐. 返回新增数."""
+    """若存在未覆盖目标, 用一次贪心从未选候选中补齐. 返回新增数.
+
+    使用 **lazy max-heap** 加速:
+        * 一开始计算每个未选候选的"对当前未覆盖目标的增益" ``g_init``;
+        * 若 ``g_init > 0`` 入堆;
+        * 每次弹出最大者, 重新校验 ``cur_g``: 若与堆中值不一致, 用最新值压回;
+          否则选它. 这样 ``while not is_feasible`` 平均复杂度 ``O(N log N)``,
+          相比旧版每轮 ``O(N · avg_cols)`` 全扫描有显著加速 (大解时 5-20x).
+
+    旧实现每加一个候选就要 ``O(N)`` 全扫一遍, 当未覆盖目标多 (扰动后) 时是
+    ``O(R · N · avg_cols)`` 的瓶颈 —— 这是 ILS 单轮总耗时的主要来源之一.
+    """
     if state.is_feasible():
         return 0
-    n_c, n_u = state.coverage.shape
+    n_c, _ = state.coverage.shape
     indptr = state.coverage.indptr
     indices = state.coverage.indices
     target_mask = state.target_mask
 
+    def gain_of(c: int) -> int:
+        cols = indices[indptr[c]:indptr[c + 1]]
+        if cols.size == 0:
+            return 0
+        sub = (state.cover_count[cols] == 0) & target_mask[cols]
+        return int(sub.sum())
+
+    heap: list[tuple[int, int]] = []
+    for c in range(n_c):
+        if state.in_solution[c]:
+            continue
+        g = gain_of(c)
+        if g > 0:
+            heapq.heappush(heap, (-g, int(c)))
+
     added = 0
-    while not state.is_feasible():
-        uncov = (state.cover_count == 0) & target_mask
-        best_c = -1
-        best_g = 0
-        for c in range(n_c):
-            if state.in_solution[c]:
-                continue
-            cols = indices[indptr[c]:indptr[c + 1]]
-            g = int(uncov[cols].sum())
-            if g > best_g:
-                best_g = g
-                best_c = c
-        if best_c < 0:
-            break
-        state.add(best_c)
+    while heap and not state.is_feasible():
+        neg_g, c = heapq.heappop(heap)
+        if state.in_solution[c]:
+            continue
+        cur_g = gain_of(int(c))
+        if cur_g <= 0:
+            continue
+        if cur_g < -neg_g:
+            heapq.heappush(heap, (-cur_g, int(c)))
+            continue
+        state.add(int(c))
         added += 1
+
     if verbose and added:
         print(f"  [可行化修复] 新增 {added} 个圆盘，当前圆盘数={state.size}")
     return added
