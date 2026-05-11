@@ -4,6 +4,10 @@ __pycache__/
 *.egg-info/
 
 # 规划/预览脚本生成的 PNG（可重新运行脚本得到）
-src/coverage_planner/scripts/分区叠图预览.png
-src/coverage_planner/scripts/分区覆盖结果.png
-src/coverage_planner/scripts/地图栅格预览.png
+src/rbcv_disk_coverage/scripts/分区叠图预览.png
+src/rbcv_disk_coverage/scripts/分区覆盖结果.png
+src/rbcv_disk_coverage/scripts/地图栅格预览.png
+
+# exploration 脚本输出
+src/exploration/data/out_plan.json
+src/exploration/data/out_semantic_plan.json

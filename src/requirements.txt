@@ -1,5 +1,7 @@
 numpy>=1.24
 scipy>=1.10
+shapely>=2.0
+rosbags>=0.9.23
 scikit-image>=0.21
 matplotlib>=3.7
 imageio>=2.31

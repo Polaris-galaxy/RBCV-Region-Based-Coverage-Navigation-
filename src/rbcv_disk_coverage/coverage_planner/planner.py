@@ -46,6 +46,22 @@ class PlannerConfig:
     # hex_first 第一阶段六边形候选的 min_room_radius_factor*r；略高一点可减少
     # 「大厅靠边一圈」对 medial/reflex 的依赖，视觉上更均匀（略增耗时）。
     hex_first_room_radius_factor: float = 0.55
+    # hex_first 阶段 A：True=六边形格点全部作为初解（铺得满、更整齐但更吃圆数）；False=对 hex 候选跑
+    # Set Cover 贪心子集（默认，圆数明显更少，后续局部搜索/全局 trim 余地大）。
+    hex_first_pure_lattice: bool = False
+    # hex_first：在子图上搜索六角格网相位 (格点数优先、EDT 和次优)，开阔区更齐整。
+    hex_optimize_grid_phase: bool = True
+    hex_phase_search_steps: int = 9
+    # hex_first 六角格相邻圆心间距 = 理论值 × lattice_spacing_scale (默认 1.0)。
+    # >1 可略减格点/圆盘数（依赖补圆仍可全覆盖，仅建议小步如 1.02~1.05 并在图上验证）。
+    hex_lattice_spacing_scale: float = 1.0
+    # hex_first 区内 local_search 最大轮数；None 表示 min(ils_max_iter, 28) 以控制墙钟。
+    hex_first_local_search_max_passes: int | None = None
+    # hex_first 局部搜索：仅对「初解里实际选用的 hex 圆心」且净空 >= factor*r 时禁止删/swap 被删端。
+    # None=不冻结。factor 越高 → 仅更深处的核被保护 → 越容易删边界冗余六角格。
+    hex_first_protect_core_edt_factor: float | None = 0.58
+    # 整图 global trim 是否沿用上述核冻结（默认关：利于跨区删冗余；需保大厅对齐可开）。
+    global_trim_protect_hex_core: bool = False
     # hex_first 区内精修：默认 **仅 local_search（无扰动）**，保留六边形格局；
     # 设为 True 则走完整 ILS（含扰动），圆数可能更少但空旷区布局易被打乱。
     hex_first_use_full_ils: bool = False
@@ -63,6 +79,23 @@ class PlannerConfig:
     overlap_tiebreak: bool = True
     # 贪心 set cover 第三级 tie-break：圆心 EDT 大者优先（空旷核优先、缓解开阔区靠边扎堆）
     greedy_edt_tiebreak: bool = True
+    # 在增益/重叠/EDT tie-break 后再比较：优先 CSR 行更短（可见像素更少）的圆盘，早选更紧凑候选。
+    greedy_nnz_tiebreak: bool = True
+    # 覆盖矩阵建完后合并「覆盖列集完全相同」的重复候选（整行相等），加速贪心/ILS。
+    merge_identical_coverage_candidates: bool = True
+    # 米/像素（与 ROS occupancy 的 resolution 一致）。用于走廊物理宽度划条等判断。
+    resolution_m_per_px: float | None = None
+    # 走廊横截面宽度超过该米数时用 ceil(width/该值) 条划分线在条带分界上布点（默认 3.4 m）。
+    corridor_strip_width_m: float = 3.4
+    enable_corridor_strip_split: bool = True
+    # 走廊单脊线自适应步距下界：不小于 floor_frac * √3 * r * alpha，防止宽截面局部 ρ→r 时步距塌到 1px 而过密。
+    corridor_spine_step_floor_frac: float | None = 0.42
+    # 判走廊时 width_ratio (=2*median(edt)/r) 的上限；略放宽可覆盖「数米宽仍呈长条」的手动分区。
+    corridor_classify_width_ratio_max: float = 4.5
+    # 在满足长方形程度 + 净空宽度时强制走 hex_first（六边形铺满 + 墙边/残余补圆 + 区内 ILS）。
+    force_hex_first_rectangle_rooms: bool = True
+    rect_room_rectangularity_min: float = 0.74
+    rect_room_width_ratio_min: float = 0.92
     enable_ils: bool = True
     ils_max_iter: int = 30
     ils_patience: int = 6
@@ -188,6 +221,13 @@ def plan_coverage(
                     f"{100*residual.size/max(1, gmap.n_free):.4f}%）"
                 )
 
+    if config.merge_identical_coverage_candidates:
+        from .visibility import prune_identical_coverage_rows
+
+        coverage, candidates, _ = prune_identical_coverage_rows(
+            coverage, candidates, edt=gmap.edt
+        )
+
     tbp = None
     if config.greedy_edt_tiebreak:
         tbp = gmap.edt[candidates[:, 0], candidates[:, 1]].astype(
@@ -200,6 +240,7 @@ def plan_coverage(
         coverage_ratio=config.coverage_ratio,
         overlap_tiebreak=config.overlap_tiebreak,
         tiebreak_priority=tbp,
+        nnz_tiebreak=config.greedy_nnz_tiebreak,
         verbose=config.verbose,
     )
     target_total = int(target_mask.sum())
@@ -279,14 +320,14 @@ def plan_coverage_hex_first(
 
     与 :func:`plan_coverage` 的区别：
         1. 不预先按"形状"决定候选组合；
-        2. **阶段 A** 单独跑一次「纯六边形 → 贪心」得到一个粗解 (大空间区
-           域基本由这一步覆盖)；
+        2. **阶段 A** 生成物理六边形格点；默认 **全格点初解**，可选对 hex 再做
+           Set Cover **贪心删减**；
         3. **阶段 B** 计算尚未被阶段 A 覆盖到的残余目标 mask, 仅在该 mask
            周围 ``hex_first_search_factor * r`` 像素内追加 **中轴**(窄过道)
            与 **反射顶点**(墙边/凹角) 候选；大厅中心因此不会被中轴/反射候选
            污染, ILS 决策空间更小。
-        4. 阶段 C 合并候选, 重建 visibility; 以**六边形贪心初解**为种子做修补,
-           再默认用 **local_search（无扰动）** 删圆/替换；可选完整 ILS。
+        4. 阶段 C 合并候选, 重建 visibility; 以**六边形格点初解**（默认可选贪心删减）
+           为种子做修补, 再默认用 **local_search（无扰动）** 删圆/替换；可选完整 ILS。
 
     几何/工程理由:
         - 在开阔区域六边形是已知最少圆覆盖；
@@ -307,13 +348,20 @@ def plan_coverage_hex_first(
 
     r = config.r
 
-    # ===== 阶段 A: 纯六边形候选 → 临时 build_coverage → greedy =====
+    # ===== 阶段 A: 六边形格网候选 →（默认）全取为初解，或贪心子集 =====
     hex_min_rr = float(config.hex_first_room_radius_factor) * float(r)
-    hex_pts = hex_candidates(gmap, r, min_room_radius=hex_min_rr)
+    hex_pts = hex_candidates(
+        gmap,
+        r,
+        min_room_radius=hex_min_rr,
+        optimize_phase=config.hex_optimize_grid_phase,
+        phase_search_steps=config.hex_phase_search_steps,
+        lattice_spacing_scale=float(config.hex_lattice_spacing_scale),
+    )
 
     if hex_pts.shape[0] == 0:
         if config.verbose:
-            print("[hex_first] 阶段A 无六边形候选 → 回退默认流水线")
+            print("[hex_first] 无 hex → 回退默认流水线")
         return plan_coverage(gmap, replace_config_use_hex_first(config, False))
 
     coverage_hex, _free_idx, free_xy = build_coverage(
@@ -322,19 +370,24 @@ def plan_coverage_hex_first(
     target_mask_full = _subsample_targets(
         free_xy, gmap.shape, config.target_subsample
     )
-    tbp_hex = None
-    if config.greedy_edt_tiebreak:
-        tbp_hex = gmap.edt[hex_pts[:, 0], hex_pts[:, 1]].astype(
-            np.float64, copy=False
+
+    if config.hex_first_pure_lattice:
+        sel_hex = list(range(int(hex_pts.shape[0])))
+    else:
+        tbp_hex = None
+        if config.greedy_edt_tiebreak:
+            tbp_hex = gmap.edt[hex_pts[:, 0], hex_pts[:, 1]].astype(
+                np.float64, copy=False
+            )
+        sel_hex, _ = greedy_set_cover(
+            coverage_hex,
+            target_mask=target_mask_full,
+            coverage_ratio=config.coverage_ratio,
+            overlap_tiebreak=config.overlap_tiebreak,
+            tiebreak_priority=tbp_hex,
+            nnz_tiebreak=config.greedy_nnz_tiebreak,
+            verbose=False,
         )
-    sel_hex, _ = greedy_set_cover(
-        coverage_hex,
-        target_mask=target_mask_full,
-        coverage_ratio=config.coverage_ratio,
-        overlap_tiebreak=config.overlap_tiebreak,
-        tiebreak_priority=tbp_hex,
-        verbose=False,
-    )
 
     cov_mask_hex = np.zeros(coverage_hex.shape[1], dtype=bool)
     indptr_h = coverage_hex.indptr
@@ -391,11 +444,10 @@ def plan_coverage_hex_first(
 
     if config.verbose:
         uncov_pct = 100.0 * n_uncov / max(n_target_total, 1)
+        mode = "全格点" if config.hex_first_pure_lattice else f"贪心{len(sel_hex)}"
         print(
-            f"[hex_first] A: hex {hex_pts.shape[0]}→选 {len(sel_hex)} "
-            f"(残余 {uncov_pct:.1f}%)；"
-            f"B: medial+reflex 补 {n_med + n_ref}；"
-            f"C: 候选 {candidates.shape[0]}"
+            f"[hex_first] hex={hex_pts.shape[0]} ({mode}) 残{uncov_pct:.1f}% "
+            f"补{n_med + n_ref} 池{candidates.shape[0]}"
         )
 
     coverage, _free_idx, free_xy = build_coverage(
@@ -417,7 +469,28 @@ def plan_coverage_hex_first(
             target_mask = target_mask.copy()
             target_mask[residual] = False
 
+    if config.merge_identical_coverage_candidates:
+        from .visibility import prune_identical_coverage_rows
+
+        coverage, candidates, _ = prune_identical_coverage_rows(
+            coverage, candidates, edt=gmap.edt
+        )
+
     hex_selected_pts = hex_pts[sel_hex] if sel_hex else np.zeros((0, 2), dtype=np.int32)
+    # 仅冻结「初解中实际选用的 hex 圆心」的高净空核；全格点模式与贪心子集模式一致，
+    # 避免未入选的格点仍占 freeze 位阻碍 swap 路径。
+    hex_core_set = {(int(a), int(b)) for a, b in hex_selected_pts.tolist()}
+    freeze_mask_ls: np.ndarray | None = None
+    prot = config.hex_first_protect_core_edt_factor
+    if prot is not None:
+        thr_px = float(prot) * float(r)
+        ed_loc = gmap.edt
+        freeze_mask_ls = np.zeros(candidates.shape[0], dtype=bool)
+        for i in range(int(candidates.shape[0])):
+            yi, xi = int(candidates[i, 0]), int(candidates[i, 1])
+            if (yi, xi) in hex_core_set and float(ed_loc[yi, xi]) >= thr_px:
+                freeze_mask_ls[i] = True
+
     cand_lookup = {
         (int(y), int(x)): int(i)
         for i, (y, x) in enumerate(candidates.tolist())
@@ -465,14 +538,20 @@ def plan_coverage_hex_first(
             st = SolutionState.from_selected(
                 coverage, target_mask, candidates, list(selected)
             )
+            _ls_mx = config.hex_first_local_search_max_passes
+            if _ls_mx is None:
+                _ls_passes = max(1, min(int(config.ils_max_iter), 28))
+            else:
+                _ls_passes = max(1, int(_ls_mx))
             local_search(
                 st,
                 r=r,
                 enable_swap2=True,
                 enable_swap3=config.ils_enable_swap3,
-                max_passes=min(int(config.ils_max_iter), 28),
+                max_passes=_ls_passes,
                 swap3_max_attempts=config.ils_swap3_max_attempts,
                 verbose=False,
+                freeze_mask=freeze_mask_ls,
             )
             selected = st.selected_indices().tolist()
             ils_size = len(selected)
@@ -483,18 +562,11 @@ def plan_coverage_hex_first(
             }
 
     if config.verbose:
-        ref = (
-            "full_ils"
-            if config.hex_first_use_full_ils
-            else "local_search"
-        )
+        ref = "ILS" if config.hex_first_use_full_ils else "LS"
+        tnote = f" {ils_stats['elapsed']:.1f}s" if ils_stats else ""
         print(
-            f"[hex_first] hex初解={len(initial_selected)} + 修补={repaired} "
-            f"→ 局部初解={greedy_size} → {ref}={ils_size}"
-            + (
-                f" ({ils_stats['elapsed']:.1f}s)"
-                if ils_stats is not None else ""
-            )
+            f"[hex_first] 初{len(initial_selected)}+修{repaired}→{greedy_size} "
+            f"{ref}→{ils_size}{tnote}"
         )
 
     final_cover_mask = np.zeros(coverage.shape[1], dtype=bool)

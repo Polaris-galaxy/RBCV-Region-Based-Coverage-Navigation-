@@ -1,6 +1,6 @@
 # scripts（命令行工具）
 
-按 **操作顺序** 列出。从 `src/coverage_planner` 目录执行。
+按 **操作顺序** 列出。从 `src/rbcv_disk_coverage` 目录执行。
 
 | 顺序 | 脚本 | 用途 |
 |------|------|------|
@@ -12,7 +12,7 @@
 参考路径写法（地图与分区 JSON 都在 `map_tools/maps/`）：
 
 ```bash
-cd src/coverage_planner
+cd src/rbcv_disk_coverage
 
 # 0) 预览地图
 py scripts/preview_real_map.py ../map_tools/maps/map7.yaml

@@ -75,6 +75,23 @@ def test_edt_tiebreak_prefers_higher_priority():
     assert sel == [1]
 
 
+def test_nnz_tiebreak_prefers_fewer_visible_cells():
+    """增益/重叠/pri 相同时选 CSR 行更短（可见格更少）."""
+    A = make_matrix([[0, 1], [0]])
+    target = np.array([True, False], dtype=bool)
+    pri = np.array([1.0, 1.0], dtype=np.float64)
+    sel, n_cov = greedy_set_cover(
+        A,
+        target_mask=target,
+        coverage_ratio=1.0,
+        overlap_tiebreak=True,
+        tiebreak_priority=pri,
+        nnz_tiebreak=True,
+    )
+    assert n_cov == 1
+    assert sel == [1]
+
+
 if __name__ == "__main__":
     test_simple_cover_full()
     test_partial_cover()

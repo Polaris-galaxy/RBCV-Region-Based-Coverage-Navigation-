@@ -216,7 +216,11 @@ class SolutionState:
         return int((in_range & ok).sum())
 
 
-def _try_remove_pass(state: SolutionState, verbose: bool = False) -> int:
+def _try_remove_pass(
+    state: SolutionState,
+    verbose: bool = False,
+    freeze_mask: np.ndarray | None = None,
+) -> int:
     """对每个已选候选尝试删除. 返回成功删除数."""
     sel = state.selected_indices()
     rng = np.random.default_rng()
@@ -225,6 +229,8 @@ def _try_remove_pass(state: SolutionState, verbose: bool = False) -> int:
     for k in order:
         c = int(sel[k])
         if not state.in_solution[c]:
+            continue
+        if freeze_mask is not None and bool(freeze_mask[c]):
             continue
         if state.can_remove(c):
             state.remove(c)
@@ -241,6 +247,7 @@ def _try_swap_2_for_1(
     cand_radius_factor: float = 1.2,
     max_pairs: int | None = None,
     verbose: bool = False,
+    freeze_mask: np.ndarray | None = None,
 ) -> int:
     """删 2 加 1 净减 1 的局部移动.
 
@@ -268,6 +275,8 @@ def _try_swap_2_for_1(
     for c1 in sel:
         if not state.in_solution[c1]:
             continue
+        if freeze_mask is not None and bool(freeze_mask[int(c1)]):
+            continue
 
         c1_xy = state.candidates_xy[c1]
         nbrs = tree.query_ball_point(c1_xy, r=pair_radius_factor * r)
@@ -279,6 +288,8 @@ def _try_swap_2_for_1(
             if c2 < c1:
                 continue
             if not state.in_solution[c2]:
+                continue
+            if freeze_mask is not None and bool(freeze_mask[int(c2)]):
                 continue
 
             need = state.need_for_pair_removal(int(c1), int(c2))
@@ -331,6 +342,7 @@ def _try_swap_3_for_2(
     cand_radius_factor: float = 1.4,
     max_attempts: int | None = None,
     verbose: bool = False,
+    freeze_mask: np.ndarray | None = None,
 ) -> int:
     """删 3 加 2 净减 1 的局部移动.
 
@@ -388,6 +400,14 @@ def _try_swap_3_for_2(
                 ))
                 if d23 > pair_thresh:
                     continue
+
+                if freeze_mask is not None:
+                    if (
+                        bool(freeze_mask[int(c1)])
+                        or bool(freeze_mask[int(c2)])
+                        or bool(freeze_mask[int(c3)])
+                    ):
+                        continue
 
                 attempts += 1
                 if max_attempts is not None and attempts > max_attempts:
@@ -499,6 +519,7 @@ def local_search(
     max_passes: int = 20,
     swap3_max_attempts: int | None = 100000,
     verbose: bool = False,
+    freeze_mask: np.ndarray | None = None,
 ) -> int:
     """交替执行 try_remove / swap_2_for_1 / swap_3_for_2 直到无改进.
 
@@ -509,14 +530,18 @@ def local_search(
     total = 0
     for it in range(max_passes):
         before = state.size
-        rm1 = _try_remove_pass(state, verbose=verbose)
+        rm1 = _try_remove_pass(state, verbose=verbose, freeze_mask=freeze_mask)
 
         sw2 = 0
         rm_after_sw2 = 0
         if enable_swap2:
-            sw2 = _try_swap_2_for_1(state, r=r, verbose=verbose)
+            sw2 = _try_swap_2_for_1(
+                state, r=r, verbose=verbose, freeze_mask=freeze_mask,
+            )
             if sw2 > 0:
-                rm_after_sw2 = _try_remove_pass(state, verbose=verbose)
+                rm_after_sw2 = _try_remove_pass(
+                    state, verbose=verbose, freeze_mask=freeze_mask,
+                )
 
         sw3 = 0
         rm_after_sw3 = 0
@@ -525,9 +550,12 @@ def local_search(
                 state, r=r,
                 max_attempts=swap3_max_attempts,
                 verbose=verbose,
+                freeze_mask=freeze_mask,
             )
             if sw3 > 0:
-                rm_after_sw3 = _try_remove_pass(state, verbose=verbose)
+                rm_after_sw3 = _try_remove_pass(
+                    state, verbose=verbose, freeze_mask=freeze_mask,
+                )
 
         total += rm1 + sw2 + rm_after_sw2 + sw3 + rm_after_sw3
         if state.size == before:
@@ -684,6 +712,7 @@ def ils(
     time_limit: float | None = None,
     seed: int = 0,
     verbose: bool = False,
+    freeze_mask: np.ndarray | None = None,
 ) -> tuple[list[int], dict]:
     """ILS 主入口.
 
@@ -725,6 +754,7 @@ def ils(
         enable_swap2=True, enable_swap3=enable_swap3,
         swap3_max_attempts=swap3_max_attempts,
         verbose=verbose,
+        freeze_mask=freeze_mask,
     )
     best_indices = state.selected_indices().tolist()
     best_size = state.size
@@ -761,6 +791,7 @@ def ils(
             enable_swap2=True, enable_swap3=enable_swap3,
             swap3_max_attempts=swap3_max_attempts,
             verbose=verbose,
+            freeze_mask=freeze_mask,
         )
 
         cur_size = state.size

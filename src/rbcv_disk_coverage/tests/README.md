@@ -3,7 +3,7 @@
 单元测试（`pytest`）。
 
 ```bash
-cd src/coverage_planner
+cd src/rbcv_disk_coverage
 py -m pytest tests/ -q
 ```
 

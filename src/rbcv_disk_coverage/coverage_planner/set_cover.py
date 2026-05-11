@@ -43,6 +43,7 @@ def greedy_set_cover(
     max_picks: int | None = None,
     overlap_tiebreak: bool = True,
     tiebreak_priority: np.ndarray | None = None,
+    nnz_tiebreak: bool = True,
     verbose: bool = False,
 ) -> tuple[list[int], int]:
     """贪心选取候选, 直到 (覆盖率达标 / 候选耗尽 / 达到 max_picks)。
@@ -59,6 +60,8 @@ def greedy_set_cover(
         tiebreak_priority: 长度 N 的非负数组, **数值越大越优先** (例如圆心处
             欧氏距离变换 EDT)。在 ``new_cnt`` 与 (若启用) ``overlap`` 均
             相同时作为第三级键; ``None`` 表示不使用.
+        nnz_tiebreak: 在以上键仍平局时优先选 CSR 行更短 (**可见格子更少**)
+            的候选, 减少「大块低效可见团」在早期被选入的倾向; 不改变近似比阶.
         verbose: 打印进度。
 
     Returns:
@@ -70,15 +73,19 @@ def greedy_set_cover(
     elif target_mask.dtype != bool:
         target_mask = target_mask.astype(bool)
 
-    if tiebreak_priority is not None:
-        tp = np.asarray(tiebreak_priority, dtype=np.float64).ravel()
+    tp = tiebreak_priority
+    if tp is not None:
+        tp = np.asarray(tp, dtype=np.float64).ravel()
         if tp.shape[0] != n:
             raise ValueError(
                 "tiebreak_priority length must match number of candidates "
                 f"n={n}, got {tp.shape[0]}"
             )
-    else:
-        tp = None
+
+    row_nnz: np.ndarray | None = None
+    if nnz_tiebreak:
+        ip = coverage.indptr
+        row_nnz = (ip[1:] - ip[:-1]).astype(np.int64, copy=False)
 
     target_total = int(target_mask.sum())
     if target_total == 0:
@@ -92,56 +99,49 @@ def greedy_set_cover(
     indptr = coverage.indptr
     indices = coverage.indices
 
-    def prio_for(i: int) -> float:
-        return float(tp[i]) if tp is not None else 0.0
-
     def stats_of(i: int) -> tuple[int, int]:
-        """returns (new_covered, overlap_with_already_covered)."""
         s, e = indptr[i], indptr[i + 1]
         cols = indices[s:e]
         if cols.size == 0:
             return 0, 0
-        in_target = target_mask[cols]
+        in_tar = target_mask[cols]
         cov_here = covered[cols]
-        new_cnt = int((in_target & (~cov_here)).sum())
-        ov_cnt = int((in_target & cov_here).sum())
+        new_cnt = int((in_tar & (~cov_here)).sum())
+        ov_cnt = int((in_tar & cov_here).sum())
         return new_cnt, ov_cnt
 
-    heap: list[tuple[int, int, float, int]] = []
+    def prio_for(i: int) -> float:
+        return float(tp[i]) if tp is not None else 0.0
+
+    def nnz_of(i: int) -> int:
+        return int(row_nnz[i]) if row_nnz is not None else 0
+
+    def heap_ent(i: int) -> tuple[int, int, float, int, int]:
+        nc, ov = stats_of(i)
+        ov_eff = ov if overlap_tiebreak else 0
+        return (-nc, ov_eff, -prio_for(i), nnz_of(i), i)
+
+    heap: list[tuple[int, int, float, int, int]] = []
     for i in range(n):
-        new_cnt, ov_cnt = stats_of(i)
+        new_cnt, _ov = stats_of(i)
         if new_cnt > 0:
-            pri = prio_for(i)
-            heapq.heappush(
-                heap,
-                (-new_cnt, ov_cnt if overlap_tiebreak else 0, -pri, i),
-            )
+            heapq.heappush(heap, heap_ent(i))
 
     while heap and n_covered_target < target_required:
         if max_picks is not None and len(selected) >= max_picks:
             break
 
-        neg_g, stale_ov, stale_neg_pri, i = heapq.heappop(heap)
-        if -neg_g <= 0:
-            break
-        cur_new, cur_ov = stats_of(i)
-        if cur_new == 0:
+        stale_ent = heapq.heappop(heap)
+        stale_i = int(stale_ent[-1])
+        cur_new_ck, _ = stats_of(stale_i)
+        if cur_new_ck <= 0:
             continue
-        cur_pri = prio_for(i)
-        cur_neg_pri = -cur_pri
-        if cur_new < -neg_g or (
-            overlap_tiebreak and cur_new == -neg_g and cur_ov > stale_ov
-        ) or (
-            tp is not None
-            and cur_new == -neg_g
-            and (not overlap_tiebreak or cur_ov == stale_ov)
-            and cur_neg_pri > stale_neg_pri
-        ):
-            heapq.heappush(
-                heap,
-                (-cur_new, cur_ov if overlap_tiebreak else 0, -cur_pri, i),
-            )
+        cur_ent = heap_ent(stale_i)
+        if cur_ent != stale_ent:
+            heapq.heappush(heap, cur_ent)
             continue
+
+        i = stale_i
 
         s, e = indptr[i], indptr[i + 1]
         cols = indices[s:e]

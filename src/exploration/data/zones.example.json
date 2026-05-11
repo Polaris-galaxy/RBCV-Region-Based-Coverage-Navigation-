@@ -1,0 +1,1 @@
+{"version": 1, "zones": [{"zone_id": "A", "bbox_xyxy": [0, 0, 1, 1], "label": ""}, {"zone_id": "B", "bbox_xyxy": [2.0, 0.8, 3.5, 2.2], "label": "", "base_weight_hint": 0.4}]}

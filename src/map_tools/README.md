@@ -1,6 +1,6 @@
 # map_tools（RBCV 仓库）
 
-**ROS1 catkin 包**：集中存放 **`maps/`**（YAML/PGM/分区 JSON），并提供 Python 桥接与可选 **`/map` 静态发布节点**，与同仓库内的 **`coverage_planner`** 共用地图读写逻辑。
+**ROS1 catkin 包**：集中存放 **`maps/`**（YAML/PGM/分区 JSON），并提供 Python 桥接与可选 **`/map` 静态发布节点**，与同仓库内的 **`coverage_planner`**（源码目录名为 **`rbcv_disk_coverage/`**）共用地图读写逻辑。
 
 ## 目录
 
@@ -13,7 +13,7 @@
 
 ## Python（无需 ROS）
 
-在已安装依赖的环境下将 **`src/coverage_planner`** 加入 `PYTHONPATH`（或由 `bootstrap` 自动查找），然后：
+在已安装依赖的环境下将 **`src/rbcv_disk_coverage`** 加入 `PYTHONPATH`（或由 `bootstrap` 自动查找），然后：
 
 ```python
 from map_tools.paths import default_map_yaml
@@ -24,7 +24,7 @@ free, info = load_free_mask_for_planning(yaml)  # 与 load_ros_map 相同
 msg = build_occupancy_grid_msg(yaml, frame_id="map")  # 需有 nav_msgs（ROS Python）
 ```
 
-若找不到 `coverage_planner`，可设置环境变量 **`COVERAGE_PLANNER_SRC`** 指向 **`.../src/coverage_planner`**（含子包目录的那一层）。
+若找不到 ``coverage_planner``，可设置 **`RBCV_DISK_COVERAGE_SRC`**（或旧名 **`COVERAGE_PLANNER_SRC`**）指向 **`.../src/rbcv_disk_coverage`**（其下应有子目录 `coverage_planner/`）。
 
 ## ROS1（后续操作）
 

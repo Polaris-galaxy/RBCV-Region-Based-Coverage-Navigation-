@@ -9,7 +9,7 @@
     **EDT 门控** 分流中轴候选（开阔核偏重六边形、狭窄/靠墙带保留中轴）, 近似
     「手绘大框内的自动细分」, 详见 :func:`config_for_kind`.
 
-        - "open"   : 高矩形度 + 平均自由半径 ≥ ``r``      ->  仅六边形 + 少量反射 (减少冗余)
+        - "rect_room": 高矩形度 + 平均自由半径 ≥ ``r``      ->  仅六边形 + 少量反射 (减少冗余)
         - "narrow" : 平均自由半径 < ``0.6 r``             ->  中轴 + 反射, 关闭六边形
         - "mixed"  : 介于两者之间                          ->  全部启用 + 窄部 EDT 限域中轴
 
@@ -28,6 +28,9 @@ from .map_io import GridMap, preprocess
 from .planner import PlannerConfig, PlannerResult, plan_coverage
 from .set_cover import find_unreachable_targets
 from .visibility import build_coverage
+
+from .candidates import _dedup
+from .corridor_split import wide_corridor_strip_centers
 
 
 def _plan_one_region_task(
@@ -111,6 +114,7 @@ def _plan_one_region_task_impl(
         edt_local=gmap_local.edt,
         r_px=r_px,
         region_id=rid,
+        corridor_width_thresh=float(base_config.corridor_classify_width_ratio_max),
     )
     if base_config.use_hex_first and shape.kind != "corridor":
         # 新流水线下不再按 kind 预先关掉某类候选；plan_coverage 内部会分流到
@@ -119,16 +123,33 @@ def _plan_one_region_task_impl(
     else:
         cfg = config_for_kind(base_config, shape.kind)
 
+    if (
+        base_config.force_hex_first_rectangle_rooms
+        and shape.kind not in ("corridor", "tiny", "narrow")
+        and shape.rectangularity >= base_config.rect_room_rectangularity_min
+        and shape.width_ratio >= base_config.rect_room_width_ratio_min
+    ):
+        cfg = replace(cfg, use_hex_first=True)
+
+    shape_final = shape
+
     if verbose:
-        flow = "hex_first" if (base_config.use_hex_first and shape.kind != "corridor") else shape.kind
+        flow = "Hx" if cfg.use_hex_first and shape.kind != "corridor" else shape.kind
         print(
-            f"[region {rid}] kind={shape.kind} flow={flow} "
-            f"free_px={shape.free_px} aspect={shape.aspect_ratio:.2f} "
-            f"width={shape.width_ratio:.2f}r"
+            f"[r{rid}] {shape.kind}/{flow} px={shape.free_px} "
+            f"AR={shape.aspect_ratio:.1f} WR={shape.width_ratio:.1f}r"
         )
 
     if shape.kind == "corridor":
-        corr_pts = _plan_corridor_local(gmap_local, r_px=r_px)
+        corr_pts, co_meta = _plan_corridor_local(
+            gmap_local,
+            r_px=r_px,
+            resolution_m_per_px=cfg.resolution_m_per_px,
+            corridor_strip_width_m=cfg.corridor_strip_width_m,
+            enable_strip_split=cfg.enable_corridor_strip_split,
+            alpha=cfg.alpha,
+            corridor_spine_step_floor_frac=cfg.corridor_spine_step_floor_frac,
+        )
         fallback = (
             corr_pts.shape[0] == 0
             or not _corridor_quick_covers_all_free_pixels(
@@ -137,23 +158,32 @@ def _plan_one_region_task_impl(
         )
         if fallback:
             # 自适应步距未全覆盖 (常见于多分支走廊): 收紧到固定 1.25·r 兜底
-            tight = _plan_corridor_local(
-                gmap_local, r_px=r_px, step_factor=1.25
+            tight_pts, tight_meta = _plan_corridor_local(
+                gmap_local,
+                r_px=r_px,
+                step_factor=1.25,
+                resolution_m_per_px=cfg.resolution_m_per_px,
+                corridor_strip_width_m=cfg.corridor_strip_width_m,
+                enable_strip_split=cfg.enable_corridor_strip_split,
+                alpha=cfg.alpha,
+                corridor_spine_step_floor_frac=cfg.corridor_spine_step_floor_frac,
             )
-            if tight.shape[0] and _corridor_quick_covers_all_free_pixels(
-                gmap_local, tight, r_px=r_px, n_rays=cfg.n_rays
+            if tight_pts.shape[0] and _corridor_quick_covers_all_free_pixels(
+                gmap_local, tight_pts, r_px=r_px, n_rays=cfg.n_rays
             ):
-                corr_pts = tight
+                corr_pts = tight_pts
+                co_meta = tight_meta
                 fallback = False
         if fallback:
             if verbose:
-                print(f"[region {rid}] corridor 兜底失败 → plan_coverage fallback")
+                print(f"[r{rid}] corridor fallback→plan_coverage")
             result = plan_coverage(gmap_local, cfg)
         else:
             if verbose:
-                print(
-                    f"[region {rid}] corridor 自适应步距 → {corr_pts.shape[0]} 个圆心"
-                )
+                suf = f" {co_meta}" if co_meta else ""
+                print(f"[r{rid}] corridor n={corr_pts.shape[0]}{suf}")
+            if co_meta:
+                shape_final = replace(shape, corridor_plan_meta=co_meta)
             free_xy_local = np.argwhere(gmap_local.free).astype(np.int32)
             result = PlannerResult(
                 gmap=gmap_local,
@@ -204,7 +234,7 @@ def _plan_one_region_task_impl(
         )
 
     return (
-        RegionPlan(region_id=rid, shape=shape, config=cfg, result=result),
+        RegionPlan(region_id=rid, shape=shape_final, config=cfg, result=result),
         pool_pts,
         pool_rids,
     )
@@ -222,7 +252,9 @@ class RegionShape:
     rectangularity: float       # area / bbox_area, 1.0 = 完美矩形
     width_ratio: float          # 2 * median(edt) / r ≈ 平均通道宽度 / r
     aspect_ratio: float         # max / min(bbox 边)
-    kind: str                   # "open" / "narrow" / "mixed" / "tiny" / "corridor"
+    # "rect_room": 规整开阔矩形（语义上对应「先六边形铺满」）。
+    kind: str                   # "rect_room" / "narrow" / "mixed" / "tiny" / "corridor"
+    corridor_plan_meta: str = ""  # 走廊专有：划分线采样摘要
 
 
 @dataclass
@@ -280,6 +312,51 @@ class PartitionResult:
         return np.concatenate(parts, axis=0)
 
 
+def _any_hex_first_core_freeze_enabled(region_plans: list[RegionPlan]) -> bool:
+    """是否存在启用 hex_first 核区 EDT 冻结的分区（用于整图精修对齐分区内策略）。"""
+    for rp in region_plans:
+        c = rp.config
+        if (
+            c.use_hex_first
+            and c.hex_first_pure_lattice
+            and c.hex_first_protect_core_edt_factor is not None
+        ):
+            return True
+    return False
+
+
+def _hex_first_global_freeze_mask(
+    points: np.ndarray,
+    region_ids: np.ndarray,
+    r_px: float,
+    edt_full: np.ndarray,
+    rid_to_cfg: dict[int, PlannerConfig],
+) -> np.ndarray | None:
+    """整图候选/已选圆上与分区内一致的「高净空 hex 核」冻结掩码."""
+    n = int(points.shape[0])
+    if n == 0:
+        return None
+    h, w = edt_full.shape
+    freeze = np.zeros(n, dtype=bool)
+    for i in range(n):
+        y = int(np.clip(points[i, 0], 0, h - 1))
+        x = int(np.clip(points[i, 1], 0, w - 1))
+        rid = int(region_ids[i])
+        cfg = rid_to_cfg.get(rid)
+        if cfg is None:
+            continue
+        prot = cfg.hex_first_protect_core_edt_factor
+        if (
+            prot is None
+            or not cfg.use_hex_first
+            or not cfg.hex_first_pure_lattice
+        ):
+            continue
+        if float(edt_full[y, x]) >= float(prot) * float(r_px):
+            freeze[i] = True
+    return freeze if freeze.any() else None
+
+
 def classify_region(
     region_mask: np.ndarray,
     edt_local: np.ndarray,
@@ -289,7 +366,7 @@ def classify_region(
     open_width_factor: float = 1.0,
     narrow_width_factor: float = 0.6,
     corridor_aspect_thresh: float = 2.5,
-    corridor_width_thresh: float = 2.0,
+    corridor_width_thresh: float = 4.5,
     tiny_px: int = 25,
 ) -> RegionShape:
     """根据 ``region_mask`` 与同形状 ``edt_local`` 输出 :class:`RegionShape`.
@@ -303,7 +380,9 @@ def classify_region(
     """
     free_px = int(region_mask.sum())
     if free_px == 0:
-        return RegionShape(region_id, str(region_id), 0, 0, 0, 0.0, 0.0, 0.0, "tiny")
+        return RegionShape(
+            region_id, str(region_id), 0, 0, 0, 0.0, 0.0, 0.0, "tiny", ""
+        )
 
     ys, xs = np.where(region_mask)
     bbox_h = int(ys.max() - ys.min() + 1)
@@ -329,7 +408,8 @@ def classify_region(
     elif width_ratio < narrow_width_factor:
         kind = "narrow"
     elif width_ratio >= open_width_factor and rectangularity >= rect_thresh:
-        kind = "open"
+        # 规整矩形开阔区：语义上对应「先做六边形整区铺设」的策略入口。
+        kind = "rect_room"
     else:
         kind = "mixed"
 
@@ -352,7 +432,7 @@ def config_for_kind(base: PlannerConfig, kind: str) -> PlannerConfig:
     在 ``base`` 之上做 **最小化覆盖修改**, 用户预先在 base 设的字段 (``r``,
     ``coverage_ratio``, ``ils_*`` 等) 仍然生效.
     """
-    if kind == "open":
+    if kind in ("rect_room", "open"):
         return replace(
             base,
             use_medial=False,
@@ -406,6 +486,7 @@ def _corridor_spaced_on_skeleton_component(
     step_factor: float | None = None,
     edt: np.ndarray | None = None,
     alpha: float = 0.95,
+    step_floor_frac: float | None = 0.42,
 ) -> np.ndarray:
     """在单个连通 skel 点集上按 PCA 主轴投影取样 (局部坐标).
 
@@ -414,8 +495,7 @@ def _corridor_spaced_on_skeleton_component(
               半通道宽 ``ρ = edt(p)``, 沿主轴下一步距
                   ``step(p) = α · 2 · sqrt(r² − ρ²)`` (ρ < r)
                   ``      = α · √3 · r``               (ρ ≥ r)
-            这是「沿走廊单行铺圆」的几何最优步距, 宽过道自动放小步、
-            窄过道大步, 与 :func:`candidates._step_length` 同源.
+            并设下界 ``≥ step_floor_frac · √3 · α · r``，避免 ρ→r 时步距塌成 1px、脊线过密。
         * 若 ``step_factor`` 给出: 退化为旧版固定步距 = ``factor·r``.
 
     Args:
@@ -457,6 +537,9 @@ def _corridor_spaced_on_skeleton_component(
                 val = max(0.0, float(r_px) ** 2 - ref_lr ** 2)
                 step = alpha * 2.0 * math.sqrt(val)
                 step = max(step, 1.0)
+            if step_floor_frac is not None and float(step_floor_frac) > 0.0:
+                floor = float(step_floor_frac) * math.sqrt(3.0) * float(r_px) * float(alpha)
+                step = max(step, floor)
             if t - last_t >= step:
                 out_idx.append(k)
                 last_t = t
@@ -479,27 +562,16 @@ def _plan_corridor_local(
     r_px: float,
     step_factor: float | None = None,
     push_into_free: bool = True,
-) -> np.ndarray:
-    """沿走廊中轴线按 **几何自适应步距** 单行放置圆心.
+    resolution_m_per_px: float | None = None,
+    corridor_strip_width_m: float = 3.4,
+    enable_strip_split: bool = True,
+    alpha: float = 0.95,
+    corridor_spine_step_floor_frac: float | None = 0.42,
+) -> tuple[np.ndarray, str]:
+    """沿走廊敷设圆心：窄道单脊线；宽道在条带分界上附加划分线采样.
 
-    几何依据:
-        在通道半宽 ``ρ`` 处, 单行单半径覆盖的最大允许步距为
-            ``step(ρ) = α · 2 · sqrt(r² − ρ²)``,
-        ``ρ ≥ r`` 时退化为正六边形单行步距 ``α · √3 · r``.
-        故 **宽过道自动收紧步距**, 窄过道用大步距, 不再依赖外部退避循环.
-
-    实现要点:
-        对 **每条中轴连通分支** 单独做 PCA + 投影步进; 多块平行走廊若混成一条
-        PCA 主轴, 会在分支之间「跳步」只留下极少圆心而导致长条 corridor 未覆盖.
-
-    Args:
-        gmap_local: 走廊子图 (含 skeleton & edt).
-        r_px: 视距半径 (像素).
-        step_factor: ``None`` 时走自适应步距 (推荐); 给定时退回固定 ``factor·r``.
-        push_into_free: 是否做最后一步 EDT 微推.
-
-    Returns:
-        ``[N, 2]`` int32 圆心 (row, col), 已在 ``gmap_local`` 局部坐标系内.
+    米制划条依赖 ``resolution_m_per_px``；未提供时仅走中轴（与旧版一致）。
+    返回 ``(centers, meta)``，``meta`` 为各骨架分量的 ``hx2`` 式摘要（h/v + 划线条数）。
     """
     from scipy.ndimage import label as nd_label
 
@@ -507,23 +579,54 @@ def _plan_corridor_local(
 
     skel = gmap_local.skeleton
     segments: list[np.ndarray] = []
+    meta_bits: list[str] = []
 
     if skel.any():
         labeled, ncomp = nd_label(skel, structure=np.ones((3, 3), dtype=int))
         for comp in range(1, ncomp + 1):
             ys, xs = np.where(labeled == comp)
             comp_pts = np.stack([ys, xs], axis=1).astype(np.float64)
+            strip = np.zeros((0, 2), dtype=np.int32)
+            n_lines = 0
+            orient_tag = ""
+            if (
+                enable_strip_split
+                and resolution_m_per_px is not None
+                and float(resolution_m_per_px) > 0.0
+            ):
+                strip, n_lines, orient_tag = wide_corridor_strip_centers(
+                    gmap_local.free,
+                    gmap_local.edt,
+                    comp_pts,
+                    float(r_px),
+                    float(resolution_m_per_px),
+                    float(corridor_strip_width_m),
+                    float(alpha),
+                )
+                if n_lines > 0 and strip.shape[0] > 0 and orient_tag != "narrow":
+                    o = orient_tag[0] if orient_tag else "?"
+                    meta_bits.append(f"{o}x{n_lines}")
+
             seg = _corridor_spaced_on_skeleton_component(
-                comp_pts, r_px,
+                comp_pts,
+                r_px,
                 step_factor=step_factor,
                 edt=gmap_local.edt if step_factor is None else None,
+                alpha=float(alpha),
+                step_floor_frac=corridor_spine_step_floor_frac,
             )
-            if seg.size:
-                segments.append(seg)
+            chunks = [c for c in (strip, seg) if isinstance(c, np.ndarray) and c.size]
+            if not chunks:
+                continue
+            merged = np.vstack(chunks).astype(np.int32)
+            merged = _dedup(merged, max(2.0, 0.52 * float(r_px)))
+            if merged.size:
+                segments.append(merged)
 
+    meta = ";".join(meta_bits)
     # 无障碍中轴时使用整块自由网格会严重误导 PCA → 交由上层 fallback plan_coverage。
     if not segments:
-        return np.zeros((0, 2), dtype=np.int32)
+        return np.zeros((0, 2), dtype=np.int32), meta
 
     pts = np.vstack(segments).astype(np.int32)
 
@@ -536,7 +639,7 @@ def _plan_corridor_local(
             max_walk=max(2, int(0.45 * float(r_px))),
         ).astype(np.int32)
 
-    return pts
+    return pts, meta
 
 
 def _corridor_quick_covers_all_free_pixels(
@@ -568,6 +671,7 @@ def globally_trim_solution(
     n_rays: int | None = None,
     max_passes: int = 3,
     verbose: bool = False,
+    freeze_mask: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray, dict]:
     """对合并后的全图解做"全图可见性下的删圆"局部搜索, 削减跨分区冗余.
 
@@ -586,6 +690,8 @@ def globally_trim_solution(
         n_rays: 极坐标射线数, ``None`` 走默认.
         max_passes: 最多反复几轮 try_remove (每轮删一遍).
         verbose: 打印中文进度.
+        freeze_mask: 与 ``selected_points``（即候选）同长；``True`` 的圆不允许删除
+            （与 :func:`refine._try_remove_pass` 一致），用于与 hex_first 核区保护对齐。
 
     Returns:
         (new_points, keep_index, stats):
@@ -648,7 +754,7 @@ def globally_trim_solution(
     pass_used = 0
     for it in range(max_passes):
         before = state.size
-        rm = _try_remove_pass(state, verbose=False)
+        rm = _try_remove_pass(state, verbose=False, freeze_mask=freeze_mask)
         total_removed += rm
         pass_used = it + 1
         if verbose:
@@ -694,6 +800,10 @@ def globally_optimize_solution(
     seed: int = 0,
     verbose: bool = False,
     greedy_edt_tiebreak: bool = True,
+    freeze_mask: np.ndarray | None = None,
+    merge_identical_pool: bool = True,
+    overlap_tiebreak: bool = True,
+    greedy_nnz_tiebreak: bool = True,
 ) -> tuple[np.ndarray, dict]:
     """整图候选池上的强力 post-processing.
 
@@ -722,6 +832,8 @@ def globally_optimize_solution(
             从硬约束中剔除. 多用于补漏地图清洗后仍残留的细小自由噪点.
         greedy_edt_tiebreak: 仅当 ``mode=="regreedy"`` 时有效；整图重新贪心时用
             圆心 EDT 作第三级 tie-break（与 :attr:`PlannerConfig.greedy_edt_tiebreak` 对齐）。
+        freeze_mask: 长度与 ``candidates`` 一致；``True`` 的候选不参与删圆 / 作为 swap
+            被删端（与 :func:`local_search` 一致），用于整图阶段对齐 hex_first 核区保护。
 
     Returns:
         ``(new_idx, stats)``: ``new_idx`` 为最终选中下标 (在 ``candidates`` 中).
@@ -759,6 +871,34 @@ def globally_optimize_solution(
     coverage, _free_idx, free_xy = build_coverage(
         gmap_full, candidates, r=r_px, n_rays=n_rays
     )
+
+    from .visibility import (
+        merge_freeze_masks_after_prune,
+        prune_identical_coverage_rows,
+        remap_pool_indices_after_prune,
+    )
+
+    if merge_identical_pool:
+        from scipy.ndimage import distance_transform_edt
+
+        n_before_merge = int(candidates.shape[0])
+        edt_prune = distance_transform_edt(free_full.astype(bool))
+        coverage, candidates, pool_otn = prune_identical_coverage_rows(
+            coverage, candidates, edt=edt_prune.astype(np.float32),
+        )
+        candidates = candidates.astype(np.int32, copy=False)
+        initial_selected_idx = remap_pool_indices_after_prune(
+            initial_selected_idx, pool_otn
+        )
+        freeze_mask = merge_freeze_masks_after_prune(
+            freeze_mask, pool_otn, int(candidates.shape[0])
+        )
+        n_pool = int(candidates.shape[0])
+        if verbose and n_before_merge != n_pool:
+            print(
+                f"[全局精修-{mode}] 合并完全相同覆盖行：候选池 "
+                f"{n_before_merge} → {n_pool}"
+            )
 
     in_target = target_mask_full[free_xy[:, 0], free_xy[:, 1]]
     sub_mask = _subsample_targets(free_xy, free_full.shape, target_subsample)
@@ -848,6 +988,8 @@ def globally_optimize_solution(
             coverage_ratio=1.0,
             verbose=False,
             tiebreak_priority=tbp,
+            overlap_tiebreak=overlap_tiebreak,
+            nnz_tiebreak=greedy_nnz_tiebreak,
         )
         if verbose:
             print(
@@ -870,7 +1012,7 @@ def globally_optimize_solution(
         passes = 0
         for it in range(ils_max_iter):
             before = state.size
-            rm = _try_remove_pass(state, verbose=False)
+            rm = _try_remove_pass(state, verbose=False, freeze_mask=freeze_mask)
             total_removed += rm
             passes = it + 1
             if verbose:
@@ -898,6 +1040,7 @@ def globally_optimize_solution(
             enable_swap3=enable_swap3,
             swap3_max_attempts=swap3_max_attempts,
             verbose=False,
+            freeze_mask=freeze_mask,
         )
         new_idx = state.selected_indices().astype(np.int64)
         stats = {
@@ -923,6 +1066,7 @@ def globally_optimize_solution(
             time_limit=time_limit,
             seed=seed,
             verbose=verbose,
+            freeze_mask=freeze_mask,
         )
         new_idx = np.asarray(sorted(new_sel), dtype=np.int64)
         stats = {
@@ -972,6 +1116,7 @@ def plan_partitions(
     parallel_backend: str = "process",
     parallel_log: bool = True,
     verbose: bool = False,
+    resolution_m_per_px: float | None = None,
 ) -> PartitionResult:
     """对 ``labels`` 中每个 ``id>=1`` 的分区独立规划并合并解.
 
@@ -1002,6 +1147,9 @@ def plan_partitions(
             密集 (货架/桌椅) 场景能多减 10-30% 圆数. 0 = 关闭 (默认).
         trim_soft_isolated_max_area_px: 见 :func:`globally_optimize_solution`.
             通常 ``< (0.3 * r_px) ** 2`` 较稳, 默认 0 关闭.
+        resolution_m_per_px: 米/像素，与 ROS 地图 ``yaml`` 中 ``resolution`` 一致；
+            写入 ``PlannerConfig.resolution_m_per_px`` 以启用走廊 **>strip 米宽** 时的
+            划条分界采样。不传则走廊仅走单脊线中轴（与旧版一致）。
 
     Notes:
         实现给每个区独立调 :func:`plan_coverage`, visibility 在子图内运算, 然后在
@@ -1028,6 +1176,11 @@ def plan_partitions(
         )
     else:
         base_config = replace(base_config, r=r_px, verbose=verbose or base_config.verbose)
+
+    if resolution_m_per_px is not None and float(resolution_m_per_px) > 0:
+        base_config = replace(
+            base_config, resolution_m_per_px=float(resolution_m_per_px)
+        )
 
     if region_ids is None:
         region_ids = sorted(int(k) for k in np.unique(labels) if k > 0)
@@ -1058,14 +1211,12 @@ def plan_partitions(
         max_workers = int(n_jobs) if n_jobs is not None else None
         if verbose:
             print(
-                f"[partition] 并行规划开启：regions={n_regions} "
-                f"backend={backend} workers={max_workers or 'auto'}"
+                f"[partition] ×{n_regions} {backend} "
+                f"w={max_workers or 'auto'}"
             )
         if verbose and backend == "thread":
             print(
-                "[partition] 说明：thread 受 GIL / 调度影响，任务管理器里多核占用常看不出"
-                "\"满核\"；本规划为纯 CPU、未用 GPU。需要明显多核并行请设 "
-                "`parallel_backend=\"process\"` 或环境变量 RBCV_PAR_BACKEND=process。"
+                "[partition] thread 常为 GIL 所限；需多核请用 process / RBCV_PAR_BACKEND。"
             )
 
         futures = {}
@@ -1091,12 +1242,10 @@ def plan_partitions(
                 done_i += 1
                 rp, pool_pts, pool_rids, log_text = fut.result()
                 if verbose and not parallel_log:
-                    print(f"[partition] 完成 {done_i}/{n_regions}: region id={futures[fut]}")
+                    print(f"[p] {done_i}/{n_regions} id={futures[fut]}")
                 if verbose and parallel_log and log_text.strip():
                     rid_done = futures[fut]
-                    print(f"[partition] ===== region {rid_done} log =====")
-                    print(log_text.rstrip())
-                    print(f"[partition] ===== end region {rid_done} =====")
+                    print(f"[p] r{rid_done}\n{log_text.rstrip()}")
                 if rp is not None:
                     out.append(rp)
                 if pool_pts.shape[0] > 0:
@@ -1112,9 +1261,7 @@ def plan_partitions(
                 continue
             progress_i += 1
             if verbose:
-                print(
-                    f"[partition] {progress_i}/{n_regions}: planning region id={rid} ..."
-                )
+                print(f"[p] {progress_i}/{n_regions} rid={rid}")
             rp, pool_pts, pool_rids, _log = _plan_one_region_task(
                 free_full=free_full,
                 labels=labels,
@@ -1133,6 +1280,18 @@ def plan_partitions(
 
     partition = PartitionResult(region_plans=out)
 
+    rid_to_cfg = {rp.region_id: rp.config for rp in out}
+    edt_for_trim: np.ndarray | None = None
+    if (
+        global_trim
+        and partition.raw_total_circles >= 2
+        and base_config.global_trim_protect_hex_core
+        and _any_hex_first_core_freeze_enabled(out)
+    ):
+        from scipy.ndimage import distance_transform_edt
+
+        edt_for_trim = distance_transform_edt(free_full.astype(bool))
+
     if global_trim and partition.raw_total_circles >= 2:
         merged_pts = partition._concat_region_points()
         merged_ids = []
@@ -1141,6 +1300,16 @@ def plan_partitions(
             if n > 0:
                 merged_ids.extend([rp.region_id] * n)
         merged_ids_arr = np.asarray(merged_ids, dtype=np.int64)
+
+        freeze_merged = None
+        if edt_for_trim is not None:
+            freeze_merged = _hex_first_global_freeze_mask(
+                merged_pts,
+                merged_ids_arr,
+                r_px,
+                edt_for_trim,
+                rid_to_cfg,
+            )
 
         sub = trim_target_subsample
         region_free = free_full & (labels > 0)
@@ -1159,6 +1328,7 @@ def plan_partitions(
                 target_subsample=sub,
                 max_passes=trim_max_passes,
                 verbose=verbose,
+                freeze_mask=freeze_merged,
             )
             partition.trimmed_points = new_pts.astype(np.int32)
             partition.trimmed_region_ids = merged_ids_arr[keep_idx]
@@ -1200,6 +1370,12 @@ def plan_partitions(
             for j, mi in enumerate(missing_idx):
                 init_idx[mi] = n_old + j
 
+        freeze_pool = None
+        if edt_for_trim is not None:
+            freeze_pool = _hex_first_global_freeze_mask(
+                pool_pts, pool_rids, r_px, edt_for_trim, rid_to_cfg
+            )
+
         if verbose:
             print(
                 f"[全局精修] 模式={global_trim_mode}：合并各分区共 "
@@ -1227,6 +1403,10 @@ def plan_partitions(
             seed=base_config.seed,
             verbose=verbose,
             greedy_edt_tiebreak=base_config.greedy_edt_tiebreak,
+            freeze_mask=freeze_pool,
+            merge_identical_pool=base_config.merge_identical_coverage_candidates,
+            overlap_tiebreak=base_config.overlap_tiebreak,
+            greedy_nnz_tiebreak=base_config.greedy_nnz_tiebreak,
         )
         partition.trimmed_points = pool_pts[new_idx].astype(np.int32)
         partition.trimmed_region_ids = pool_rids[new_idx]

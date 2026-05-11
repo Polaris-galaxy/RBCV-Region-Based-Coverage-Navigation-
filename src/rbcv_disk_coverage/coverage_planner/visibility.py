@@ -198,6 +198,108 @@ def build_coverage(
     return coverage, free_flat_idx, free_xy
 
 
+def prune_identical_coverage_rows(
+    coverage: csr_matrix,
+    candidates: np.ndarray,
+    edt: np.ndarray | None = None,
+) -> tuple[csr_matrix, np.ndarray, np.ndarray]:
+    """合并 CSR 中行模式（覆盖的列集）完全相同的候选，缩短后续贪心 / ILS。
+
+    对可见性完全一致的两个圆盘，贪心或 ILS 中只需保留其一；择优规则：
+    EDT 更大（圆心更深入开阔区）优先，若无 EDT 则保留下标更小者。
+
+    Returns:
+        ``(coverage', candidates', old_to_new)``：``old_to_new[k]`` 为原第 ``k``
+        行合并后的新行下标。
+    """
+    n = int(coverage.shape[0])
+    if n <= 1:
+        return coverage, candidates, np.arange(n, dtype=np.int64)
+
+    cand = np.asarray(candidates, dtype=np.int32)
+    indptr = coverage.indptr
+    indices = coverage.indices
+
+    groups: dict[bytes, list[int]] = {}
+    key_order: list[bytes] = []
+    for i in range(n):
+        s, e = int(indptr[i]), int(indptr[i + 1])
+        key = indices[s:e].tobytes()
+        if key not in groups:
+            groups[key] = []
+            key_order.append(key)
+        groups[key].append(int(i))
+
+    keepers: list[int] = []
+    old_to_new = np.full(n, -1, dtype=np.int64)
+
+    for key in key_order:
+        idxs = groups[key]
+        if len(idxs) == 1:
+            keeper = idxs[0]
+        elif edt is not None:
+            h, w = edt.shape
+            keeper = max(
+                idxs,
+                key=lambda j: float(
+                    edt[
+                        min(max(int(cand[j, 0]), 0), h - 1),
+                        min(max(int(cand[j, 1]), 0), w - 1),
+                    ]
+                ),
+            )
+        else:
+            keeper = min(idxs)
+
+        new_i = len(keepers)
+        keepers.append(keeper)
+        for j in idxs:
+            old_to_new[j] = new_i
+
+    keep_arr = np.asarray(keepers, dtype=np.int64)
+    new_cov = coverage[keep_arr]
+    new_cand = cand[keep_arr].copy()
+    return new_cov, new_cand, old_to_new
+
+
+def remap_pool_indices_after_prune(
+    old_indices: np.ndarray | list[int],
+    old_to_new: np.ndarray,
+) -> np.ndarray:
+    """将 ``initial_selected_idx`` 映射到 ``prune_identical_coverage_rows`` 之后的池。"""
+    seen: set[int] = set()
+    out: list[int] = []
+    for o in np.asarray(old_indices, dtype=np.int64).ravel():
+        ni = int(old_to_new[int(o)])
+        if ni < 0:
+            continue
+        if ni not in seen:
+            seen.add(ni)
+            out.append(ni)
+    return np.asarray(out, dtype=np.int64)
+
+
+def merge_freeze_masks_after_prune(
+    freeze: np.ndarray | None,
+    old_to_new: np.ndarray,
+    n_new: int,
+) -> np.ndarray | None:
+    """合并重复行后：任一旧行处于冻结则新行冻结。"""
+    if freeze is None:
+        return None
+    fz = np.asarray(freeze, dtype=bool).ravel()
+    if fz.size != int(old_to_new.size):
+        return freeze
+    out = np.zeros(max(1, n_new), dtype=bool)
+    for old_i, fr in enumerate(fz):
+        if not fr:
+            continue
+        ni = int(old_to_new[old_i])
+        if 0 <= ni < out.size:
+            out[ni] = True
+    return out
+
+
 def _dedup_points(pts: np.ndarray, dedup_radius: float) -> np.ndarray:
     if pts.shape[0] <= 1 or dedup_radius <= 0:
         return pts

@@ -33,10 +33,11 @@ from coverage_planner.region_io import (  # noqa: E402
 )
 from coverage_planner.visibility import visible_disk  # noqa: E402
 
-# 默认可调时间上限（秒）。环境变量 RBCV_REGION_ILS_TIME_LIMIT /
-# RBCV_TRIM_TIME_LIMIT 显式设置时优先生效；设为 0 表示该维度不限制。
-_DEFAULT_REGION_ILS_TIME_LIMIT_S = 180.0
-_DEFAULT_GLOBAL_TRIM_TIME_LIMIT_S = 600.0
+# 默认可调时间上限（秒）。缩短默认以适配「单次交互式跑 demo」；
+# 要更激进的精修可自行提高或设环境变量 RBCV_REGION_ILS_TIME_LIMIT /
+# RBCV_TRIM_TIME_LIMIT；设为 0 表示该维度不限制。
+_DEFAULT_REGION_ILS_TIME_LIMIT_S = 90.0
+_DEFAULT_GLOBAL_TRIM_TIME_LIMIT_S = 240.0
 
 
 def _plot(free_full, partition, r_px, save_path, n_rays: int | None = None):
@@ -159,7 +160,7 @@ def main():
         raise SystemExit(2)
     r_px = meters_to_pixels(r_meters, info.resolution)
     print(
-        f"[演示] 地图尺寸={free.shape}，r（像素）={r_px:.2f}，"
+        f"[演示] 地图尺寸={free.shape}，r（像素）={r_px:.2f}，分辨率={info.resolution} m/px，"
         f"有效分区像素={int(((labels >= 1) & free).sum())}"
     )
 
@@ -178,13 +179,35 @@ def main():
     else:
         n_rays_plan = None
 
-    hex_first_env = os.environ.get("RBCV_HEX_FIRST", "1").strip().lower()
+    hex_first_env = os.environ.get("RBCV_HEX_FIRST", "0").strip().lower()
     use_hex_first = hex_first_env in ("1", "true", "yes", "on")
     hex_full_ils = os.environ.get("RBCV_HEX_FIRST_FULL_ILS", "0").strip().lower() in (
         "1", "true", "yes", "on",
     )
-    # hex_first 下少撒随机点，避免 ILS 修复阶段引入「靠边一团」的冗余圆。
-    random_extra_eff = 120 if use_hex_first else 200
+    # 统一 DGR：不开 hex_first 时略多撒点以压圆数；hex_first 二阶段池已大，少撒点省时间。
+    random_extra_eff = 38 if use_hex_first else 95
+
+    global_hex_freeze = os.environ.get(
+        "RBCV_GLOBAL_HEX_FREEZE", "0"
+    ).strip().lower() in ("1", "true", "yes", "on")
+
+    hex_scale_env = os.environ.get("RBCV_HEX_LATTICE_SCALE", "").strip()
+    try:
+        hex_lattice_spacing_scale = (
+            float(hex_scale_env) if hex_scale_env else 1.0
+        )
+    except ValueError:
+        hex_lattice_spacing_scale = 1.0
+
+    hex_core_env = os.environ.get("RBCV_HEX_CORE_FREEZE_FACTOR", "").strip()
+    extra_cfg: dict = {}
+    if hex_core_env.lower() in ("none", "off", "0", "false"):
+        extra_cfg["hex_first_protect_core_edt_factor"] = None
+    elif hex_core_env and hex_core_env.lower() not in ("default",):
+        try:
+            extra_cfg["hex_first_protect_core_edt_factor"] = float(hex_core_env)
+        except ValueError:
+            pass
 
     base = PlannerConfig(
         r=r_px,
@@ -197,28 +220,33 @@ def main():
         random_extra=random_extra_eff,
         n_rays=n_rays_plan,
         enable_ils=True,
-        ils_max_iter=40,
-        ils_patience=10,
+        ils_max_iter=28,
+        ils_patience=8,
         overlap_tiebreak=True,
         use_hex_first=use_hex_first,
+        # 仅当显式开 hex_first 时，才对「类大厅 mixed」再强制走两阶段铺底。
+        force_hex_first_rectangle_rooms=use_hex_first,
         hex_first_use_full_ils=hex_full_ils,
+        hex_lattice_spacing_scale=hex_lattice_spacing_scale,
         verbose=False,
         seed=0,
+        global_trim_protect_hex_core=global_hex_freeze,
+        **extra_cfg,
     )
     print(
         f"[演示] 候选流水线 = "
-        f"{'hex_first（六边形铺底+残余补圆）' if use_hex_first else '默认（按形状预分类）'}"
-        f"（RBCV_HEX_FIRST，默认 1）；"
-        f"区内精修 = {'完整 ILS（扰动）' if hex_full_ils else '仅局部 search（默认，保布局）'}"
+        f"{'hex_first（两阶段六边形+补圆）' if use_hex_first else '统一 DGR（按形状组合候选+贪心+ILS，默认推荐）'}"
+        f"（RBCV_HEX_FIRST，默认 0）；"
+        f"区内精修 = {'完整 ILS（扰动）' if hex_full_ils else '标准 ILS/LS'}"
         f"（RBCV_HEX_FIRST_FULL_ILS）"
     )
 
     best = os.environ.get("RBCV_BEST", "0").strip().lower() in ("1", "true", "yes", "on")
     trim_mode = os.environ.get("RBCV_TRIM_MODE", "local").strip().lower()
-    soft_factor = float(os.environ.get("RBCV_SOFT_FACTOR", "0.10"))
+    soft_factor = float(os.environ.get("RBCV_SOFT_FACTOR", "0.11"))
     soft_iso = int(os.environ.get("RBCV_SOFT_ISO_PX", "64"))
-    ils_iter = int(os.environ.get("RBCV_TRIM_ILS_ITER", "30"))
-    ils_pat = int(os.environ.get("RBCV_TRIM_ILS_PATIENCE", "8"))
+    ils_iter = int(os.environ.get("RBCV_TRIM_ILS_ITER", "24"))
+    ils_pat = int(os.environ.get("RBCV_TRIM_ILS_PATIENCE", "6"))
     swap3_attempts = int(os.environ.get("RBCV_TRIM_SWAP3_ATTEMPTS", "120000"))
 
     trim_tl_env = os.environ.get("RBCV_TRIM_TIME_LIMIT", "").strip()
@@ -258,7 +286,7 @@ def main():
         if fast:
             time_limit = 180.0
         elif best:
-            time_limit = 600.0
+            time_limit = 360.0
         else:
             time_limit = _DEFAULT_GLOBAL_TRIM_TIME_LIMIT_S
 
@@ -272,11 +300,11 @@ def main():
         trim_mode = "regreedy"
         soft_factor = max(soft_factor, 0.12)
         soft_iso = max(soft_iso, 64)
-        ils_iter = max(ils_iter, 60)
-        ils_pat = max(ils_pat, 12)
-        swap3_attempts = max(swap3_attempts, 300000)
+        ils_iter = max(ils_iter, 45)
+        ils_pat = max(ils_pat, 10)
+        swap3_attempts = max(swap3_attempts, 250000)
         if time_limit <= 0:
-            time_limit = 600.0
+            time_limit = 420.0
 
     print(
         f"[演示] 全局精修模式 = {trim_mode}（RBCV_TRIM_MODE；best={best}），"
@@ -305,6 +333,17 @@ def main():
                 "百万级格可能极慢。"
             )
 
+    print(
+        f"[演示] 整图精修 hex 核冻结 = {global_hex_freeze}（RBCV_GLOBAL_HEX_FREEZE，"
+        "默认关，利于跨区删冗余；要保大厅格对齐可设 1）"
+    )
+    _hp = getattr(base, "hex_first_protect_core_edt_factor", None)
+    print(
+        f"[演示] 六角格距缩放 = {hex_lattice_spacing_scale}（RBCV_HEX_LATTICE_SCALE，"
+        f"默认 1）；hex 区内核冻结 EDT 因子 = {_hp}（RBCV_HEX_CORE_FREEZE_FACTOR，"
+        "none=关；略大如 0.7~0.75→冻结核更小、更易区内删圆）"
+    )
+
     par_backend = os.environ.get("RBCV_PAR_BACKEND", "process").strip().lower()
     print(
         "[演示] 分区并行后端 = "
@@ -330,6 +369,7 @@ def main():
         parallel_backend=par_backend,
         parallel_log=True,
         verbose=True,
+        resolution_m_per_px=float(info.resolution),
     )
     elapsed = time.time() - t0
 
@@ -350,11 +390,13 @@ def main():
     for rp in partition.region_plans:
         s = rp.shape
         n = rp.result.selected_points.shape[0]
+        corridor_note = getattr(s, "corridor_plan_meta", "") or ""
+        co_txt = f" corridor={corridor_note!r}" if corridor_note else ""
         print(
-            f"  分区{rp.region_id:>2} 类型={s.kind:<6} "
+            f"  分区{rp.region_id:>2} 类型={s.kind:<10} "
             f"可走像素={s.free_px:>7d} 长方形程度={s.rectangularity:.2f} "
             f"宽度比={s.width_ratio:.2f} → 圆盘数={n} "
-            f"覆盖率={100*rp.result.coverage_ratio:.2f}%"
+            f"覆盖率={100*rp.result.coverage_ratio:.2f}%{co_txt}"
         )
 
     save_path = os.path.join(HERE, "分区覆盖结果.png")

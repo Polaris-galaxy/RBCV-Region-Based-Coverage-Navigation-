@@ -122,10 +122,52 @@ def medial_candidates(
     return np.asarray(out, dtype=np.int32)
 
 
+def _hex_collect_for_phase(
+    h: int,
+    w: int,
+    free: np.ndarray,
+    edt: np.ndarray,
+    r: float,
+    min_room_radius: float,
+    ox: float,
+    oy: float,
+    *,
+    lattice_spacing_scale: float = 1.0,
+) -> list[tuple[int, int]]:
+    """固定相位 (ox,oy) 下枚举可走且满足净空阈值的六角格点."""
+    sc = max(float(lattice_spacing_scale), 1e-6)
+    dx = r * math.sqrt(3.0) * sc
+    dy = 1.5 * r * sc
+    pts: list[tuple[int, int]] = []
+    j = 0
+    y = oy + dy / 2.0
+    while y < h:
+        row_off = (dx / 2.0) if (j % 2 == 1) else 0.0
+        x = ox + dx / 2.0 + row_off
+        while x < w:
+            yi = int(round(y))
+            xi = int(round(x))
+            if (
+                0 <= yi < h
+                and 0 <= xi < w
+                and bool(free[yi, xi])
+                and float(edt[yi, xi]) >= float(min_room_radius)
+            ):
+                pts.append((yi, xi))
+            x += dx
+        y += dy
+        j += 1
+    return pts
+
+
 def hex_candidates(
     gmap: GridMap,
     r: float,
     min_room_radius: float | None = None,
+    *,
+    optimize_phase: bool = False,
+    phase_search_steps: int = 9,
+    lattice_spacing_scale: float = 1.0,
 ) -> np.ndarray:
     """在 ``edt >= min_room_radius`` 的"宽阔房间"区域铺设六边形点阵。
 
@@ -134,31 +176,60 @@ def hex_candidates(
         r: 观测半径 (像素)。
         min_room_radius: 仅在 ``edt`` 不小于该值的位置放点;
             默认为 ``0.5 * r`` , 即只在距障碍 ``>= r/2`` 的开阔处。
+        optimize_phase: 在周期 ``[0,dx)×[0,dy)`` 内 coarse 搜索相位, 优先
+            「合法六角格点数多、且离障碍更远（EDT 和更大）」，使大厅空白
+            区视觉对齐更规整。False 等价于相位 (0,0) (与旧网格锚定一致)。
+        phase_search_steps: 相位搜索每轴采样数 ``≥2``.
+        lattice_spacing_scale: 六角格距整体放大系数 (相对理论紧覆盖 ``≥1``).
+            默认 ``1.0``; 略大于 ``1`` (如 ``1.03``) 可略减格点数, 依赖残余
+            贪心/补圆仍达全覆盖, 需在具体地图上验证.
     """
     if min_room_radius is None:
         min_room_radius = 0.5 * r
 
-    h, w = gmap.shape
-    dx = r * math.sqrt(3.0)
-    dy = 1.5 * r
+    free = np.asarray(gmap.free, dtype=bool)
+    edt = gmap.edt
+    h, w = free.shape
+    sc = max(float(lattice_spacing_scale), 1e-6)
+    dx = r * math.sqrt(3.0) * sc
+    dy = 1.5 * r * sc
 
-    pts: list[tuple[int, int]] = []
-    j = 0
-    y = dy / 2.0
-    while y < h:
-        offset = (dx / 2.0) if (j % 2 == 1) else 0.0
-        x = dx / 2.0 + offset
-        while x < w:
-            yi, xi = int(round(y)), int(round(x))
-            if 0 <= yi < h and 0 <= xi < w and gmap.edt[yi, xi] >= min_room_radius:
-                pts.append((yi, xi))
-            x += dx
-        y += dy
-        j += 1
+    steps = max(2, int(phase_search_steps))
+    ox_vals = np.linspace(0.0, dx, num=steps, endpoint=False).astype(np.float64)
+    oy_vals = np.linspace(0.0, dy, num=steps, endpoint=False).astype(np.float64)
 
-    if not pts:
+    best_pts: list[tuple[int, int]] = []
+    best_key = (-1, -1.0)
+
+    if not optimize_phase:
+        ox_vals = np.array([0.0], dtype=np.float64)
+        oy_vals = np.array([0.0], dtype=np.float64)
+
+    for ox in ox_vals:
+        for oy in oy_vals:
+            pts = _hex_collect_for_phase(
+                h,
+                w,
+                free,
+                edt,
+                r,
+                float(min_room_radius),
+                float(ox),
+                float(oy),
+                lattice_spacing_scale=sc,
+            )
+            if not pts:
+                key = (0, 0.0)
+            else:
+                ed_sum = sum(float(edt[y, x]) for y, x in pts)
+                key = (len(pts), ed_sum)
+            if key > best_key:
+                best_key = key
+                best_pts = pts
+
+    if not best_pts:
         return np.zeros((0, 2), dtype=np.int32)
-    return np.asarray(pts, dtype=np.int32)
+    return np.asarray(best_pts, dtype=np.int32)
 
 
 def reflex_candidates(

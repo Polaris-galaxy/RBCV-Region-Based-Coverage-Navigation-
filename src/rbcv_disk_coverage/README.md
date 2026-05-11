@@ -73,7 +73,7 @@ pip install -r requirements.txt
 完整端到端流程（划分 → 覆盖）见 [`../USAGE.md`](../USAGE.md)。最小命令：
 
 ```bash
-cd src/coverage_planner
+cd src/rbcv_disk_coverage
 py scripts/preview_real_map.py ../map_tools/maps/map7.yaml
 py scripts/draw_regions.py    ../map_tools/maps/map7.yaml ../map_tools/maps/my_regions.json
 py scripts/preview_regions.py ../map_tools/maps/map7.yaml ../map_tools/maps/my_regions.json
