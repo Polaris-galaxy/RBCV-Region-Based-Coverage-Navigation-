@@ -28,6 +28,7 @@ from coverage_planner import (  # noqa: E402
 )
 from coverage_planner.map_io import load_ros_map, meters_to_pixels  # noqa: E402
 from coverage_planner.region_io import (  # noqa: E402
+    RegionsSpec,
     load_regions_json,
     rasterize_regions,
 )
@@ -124,18 +125,16 @@ def _plot(free_full, partition, r_px, save_path, n_rays: int | None = None):
     plt.close(fig)
 
 
-def main():
-    yaml_path = os.path.join(MAP_TOOLS_MAPS, "map7.yaml")
-    r_meters = 2.5
-    regions_path = os.path.join(MAP_TOOLS_MAPS, "regions_map7.example.json")
+def run_partition_demo(
+    yaml_path: str,
+    r_meters: float,
+    regions_path: str,
+) -> tuple[object, object, np.ndarray, float, int | None, int]:
+    """加载地图与分区 JSON，按 ``demo_regions`` 环境变量策略跑 ``plan_partitions``。
 
-    if len(sys.argv) >= 2:
-        yaml_path = sys.argv[1]
-    if len(sys.argv) >= 3:
-        r_meters = float(sys.argv[2])
-    if len(sys.argv) >= 4:
-        regions_path = sys.argv[3]
-
+    Returns:
+        ``partition, info, free_full, r_px, n_rays_plan, geo_n_rays`` ——与 :func:`_plot` 入参兼容。
+    """
     print(f"[演示] 地图 YAML        = {yaml_path}")
     print(f"[演示] 覆盖半径 r       = {r_meters} 米")
     print(f"[演示] 分区 JSON        = {regions_path}")
@@ -398,6 +397,61 @@ def main():
             f"宽度比={s.width_ratio:.2f} → 圆盘数={n} "
             f"覆盖率={100*rp.result.coverage_ratio:.2f}%{co_txt}"
         )
+
+    return partition, info, free, r_px, n_rays_plan, geo_n_rays
+
+
+def survey_zones_dict_from_partition(
+    spec: RegionsSpec,
+    partition: object,
+    info: object,
+    radius_m: float,
+) -> dict:
+    """将规划结果写成 ``exploration`` 可用的 ``survey_zones.json``（version 2）结构。"""
+    from collections import defaultdict
+
+    ox, oy, _ = info.origin
+    res = float(info.resolution)
+    pts = partition.all_points()
+    rids = partition.all_region_ids()
+    sites_by_k: dict[int, list[list[float]]] = defaultdict(list)
+    if pts.shape[0] > 0:
+        for (row, col), rid in zip(pts, rids):
+            k = int(rid)
+            mx = ox + (float(col) + 0.5) * res
+            my = oy + (float(row) + 0.5) * res
+            sites_by_k[k].append([mx, my])
+    zones: list[dict] = []
+    for idx, reg in enumerate(spec.regions, start=1):
+        zones.append(
+            {
+                "zone_id": reg.id,
+                "bbox_xyxy": [reg.xmin, reg.ymin, reg.xmax, reg.ymax],
+                "label": "",
+                "coverage": {
+                    "radius_m": float(radius_m),
+                    "sites_m": sites_by_k.get(idx, []),
+                },
+            }
+        )
+    return {"version": 2, "zones": zones}
+
+
+def main():
+    yaml_path = os.path.join(MAP_TOOLS_MAPS, "map7.yaml")
+    r_meters = 2.5
+    regions_path = os.path.join(MAP_TOOLS_MAPS, "regions_map7.example.json")
+
+    if len(sys.argv) >= 2:
+        yaml_path = sys.argv[1]
+    if len(sys.argv) >= 3:
+        r_meters = float(sys.argv[2])
+    if len(sys.argv) >= 4:
+        regions_path = sys.argv[3]
+
+    partition, info, free, r_px, n_rays_plan, geo_n_rays = run_partition_demo(
+        yaml_path, r_meters, regions_path
+    )
 
     save_path = os.path.join(HERE, "分区覆盖结果.png")
     try:

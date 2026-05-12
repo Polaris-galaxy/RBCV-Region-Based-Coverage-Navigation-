@@ -1,0 +1,21 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- 阶段一：发布 /map + 分区标签；运行圆盘覆盖并写出 survey_zones.json（检测框 bbox + coverage） -->
+  <arg name="map_yaml" default="$(find map_tools)/maps/map7.yaml"/>
+  <arg name="regions_json" default="$(find map_tools)/maps/my_regions.json"/>
+  <arg name="frame_id" default="map"/>
+  <arg name="coverage_radius_m" default="2.5"/>
+  <arg name="survey_out" default="$(find map_tools)/maps/rbcv_survey_zones.json"/>
+
+  <include file="$(find map_tools)/launch/publish_static_map.launch">
+    <arg name="map_yaml" value="$(arg map_yaml)"/>
+    <arg name="frame_id" value="$(arg frame_id)"/>
+  </include>
+
+  <include file="$(find coverage_regions_ros)/launch/publish_partition_labels.launch">
+    <arg name="regions_json" value="$(arg regions_json)"/>
+  </include>
+
+  <node pkg="rbcv_bringup" type="regions_to_survey_zones.py" name="regions_to_survey" output="screen"
+        args="$(arg map_yaml) $(arg regions_json) $(arg coverage_radius_m) $(arg survey_out)"/>
+</launch>

@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- 阶段二：survey_zones.json +（可选）bag/检测 → 语义探索计划 JSON。无 bag 时为自检模式。 -->
+  <arg name="survey" default="$(find map_tools)/maps/rbcv_survey_zones.json"/>
+  <arg name="semantic_out" default="$(find map_tools)/maps/rbcv_semantic_plan.json"/>
+  <arg name="bag" default=""/>
+  <arg name="topic" default="/odom"/>
+  <arg name="detections" default=""/>
+  <arg name="cell_size" default="0"/>
+
+  <node pkg="rbcv_bringup" type="rbcv_semantic_stack_cli.py" name="semantic_stack" output="screen">
+    <env name="RBCV_SEMANTIC_FROM_LAUNCH" value="1"/>
+    <env name="RBCV_SURVEY" value="$(arg survey)"/>
+    <env name="RBCV_OUT" value="$(arg semantic_out)"/>
+    <env name="RBCV_BAG" value="$(arg bag)"/>
+    <env name="RBCV_TOPIC" value="$(arg topic)"/>
+    <env name="RBCV_DET" value="$(arg detections)"/>
+    <env name="RBCV_CELL" value="$(arg cell_size)"/>
+  </node>
+</launch>

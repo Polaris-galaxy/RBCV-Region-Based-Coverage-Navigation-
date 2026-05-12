@@ -1,0 +1,16 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- 一键：/map + /region_partition_labels（先起地图，再起分区；分区节点订阅 /map） -->
+  <arg name="map_yaml" default="$(find map_tools)/maps/map7.yaml"/>
+  <arg name="regions_json" default="$(find map_tools)/maps/my_regions.json"/>
+  <arg name="frame_id" default="map"/>
+
+  <include file="$(find map_tools)/launch/publish_static_map.launch">
+    <arg name="map_yaml" value="$(arg map_yaml)"/>
+    <arg name="frame_id" value="$(arg frame_id)"/>
+  </include>
+
+  <include file="$(find coverage_regions_ros)/launch/publish_partition_labels.launch">
+    <arg name="regions_json" value="$(arg regions_json)"/>
+  </include>
+</launch>

@@ -18,7 +18,8 @@
 | 文件 | 作用 |
 |------|------|
 | `README.md` | `src/` 下各包与文档索引 |
-| `USAGE.md` | **端到端操作指南**：分区 JSON → 预览 → 逐区覆盖 |
+| `USAGE.md` | **端到端操作指南**：分区 JSON → 预览 → 逐区覆盖；含 `rbcv_bringup` 一键 `roslaunch` |
+| `rbcv_bringup/launch/` | `rbcv_map_and_regions.launch`；**两阶段** `rbcv_stage1_partitions_to_survey.launch`、`rbcv_stage2_semantic_explore.launch` |
 | `requirements.txt` | Python 依赖（规划器 + 示例可视化 + pytest） |
 | `Kimera部署指南.md` | Kimera（ROS1 Noetic）部署备忘 |
 | `ROS2终端指令.md` | ROS 2 CLI 命令参考（备忘；本仓库 ROS1 节点与其无关） |

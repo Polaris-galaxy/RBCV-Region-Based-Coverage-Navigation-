@@ -8,6 +8,7 @@
 | **`exploration/`** | **语义探索**：检测框 + rosbag + 视觉 JSONL、权重、均匀格、闭合路径 | 子包 **`exploration.survey`** 管覆盖几何与 rosbag 对齐；入口脚本 `scripts/run_semantic_stack.py`。 |
 | **`map_tools/`** | 地图资源与 ROS1 **`/map` 发布** | catkin 包名 `map_tools`；`bootstrap` 会定位 `rbcv_disk_coverage` 以加载 `coverage_planner`。 |
 | **`coverage_regions_ros/`** | ROS1 分区标签广播 | 订阅 `/map`，发布分区栅格。 |
+| **`rbcv_bringup/`** | ROS1 **组合与两阶段流水线** | `rbcv_map_and_regions.launch`；**阶段一** `rbcv_stage1_partitions_to_survey.launch`（`/map`+分区+写出 `survey_zones.json`）；**阶段二** `rbcv_stage2_semantic_explore.launch`（语义栈 → 计划 JSON）。 |
 
 环境变量（可选）：
 
