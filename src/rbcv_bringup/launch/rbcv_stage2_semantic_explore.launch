@@ -1,6 +1,6 @@
 <?xml version="1.0"?>
 <launch>
-  <!-- 阶段二：survey_zones.json +（可选）bag/检测 → 语义探索计划 JSON。无 bag 时为自检模式。 -->
+  <!-- 阶段二：ROS1。默认 topic=/odom（nav_msgs/Odometry），仅用 x,y 平面与检测区对齐。survey 与 detections 建议均为 map 系。 -->
   <arg name="survey" default="$(find map_tools)/maps/rbcv_survey_zones.json"/>
   <arg name="semantic_out" default="$(find map_tools)/maps/rbcv_semantic_plan.json"/>
   <arg name="bag" default=""/>

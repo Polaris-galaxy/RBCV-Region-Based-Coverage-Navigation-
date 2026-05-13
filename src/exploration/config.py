@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Literal
 
 
 Meter = float
+
+INITIAL_WEIGHT_FLOOR: float = 0.35
+INITIAL_WEIGHT_CEIL: float = 0.85
+INITIAL_WEIGHT_DEFAULT: float = 0.55
 
 
 @dataclass
@@ -20,9 +24,7 @@ class DetectionZone:
     zone_id: str
     polygon_xy: list[tuple[float, float]] | None = None
     bbox_xyxy: tuple[float, float, float, float] | None = None
-    # 覆盖语义：是否在多边形内部即算「到过覆盖格」——与 coverage 分辨率一致时使用
     label: str = ""
-    # 记录在 JSON 里的可选基础权重（若不在 InitialRegionWeight 里单独给）
     base_weight_hint: Meter | None = None
 
 
@@ -57,7 +59,6 @@ class ObjectObservation:
     timestamp_s: float
     zone_id: str
     class_name: str
-    # 代表点（如检测框中心投影到地面）
     x: float
     y: float
     confidence: float = 1.0
@@ -74,7 +75,7 @@ class AggregationParams:
     # w_zone = clamp(w_floor + (n_unique / scale) * (w_ceil - w_floor), ...)
     count_scale: float = 5.0
     # 与初始权重融合：multiplicative mix
-    blend_with_initial: Literal["mul", "add", "max"] = "mul"
+    blend_with_initial: Literal["mul", "add", "max"] = "add"
 
 
 @dataclass

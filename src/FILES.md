@@ -20,11 +20,22 @@
 | `README.md` | `src/` 下各包与文档索引 |
 | `USAGE.md` | **端到端操作指南**：分区 JSON → 预览 → 逐区覆盖；含 `rbcv_bringup` 一键 `roslaunch` |
 | `rbcv_bringup/launch/` | `rbcv_map_and_regions.launch`；**两阶段** `rbcv_stage1_partitions_to_survey.launch`、`rbcv_stage2_semantic_explore.launch` |
+| `rbcv_bringup/README.md` | **bringup 包说明**：各 launch 参数、`RBCV_*` 环境变量与脚本索引 |
 | `requirements.txt` | Python 依赖（规划器 + 示例可视化 + pytest） |
 | `Kimera部署指南.md` | Kimera（ROS1 Noetic）部署备忘 |
 | `ROS2终端指令.md` | ROS 2 CLI 命令参考（备忘；本仓库 ROS1 节点与其无关） |
 | `WORKSPACE_LAYOUT.md` | **`src/` 目录分工**（`rbcv_disk_coverage` / `exploration` / ROS） |
 | `FILES.md` | **本文件**：每个文件的用途索引 |
+
+---
+
+## `src/exploration_core_cpp/`（可选 C++ 加速）
+
+| 文件 | 作用 |
+|------|------|
+| `README.md` | 构建 **`rbcv_plan_tour`**、环境变量 **`RBCV_EXPLORATION_PLANNER_EXE`**、stdin/stdout 格式 |
+| `CMakeLists.txt` | 独立 CMake 工程（非 catkin 必需） |
+| `src/rbcv_plan_tour.cpp` | 与 `exploration/planner.py` 等价的 NN + 2-opt 可执行文件 |
 
 ---
 
@@ -65,7 +76,7 @@
 | `pipeline.py` | `run_post_survey_planning`：观测 → 权重 → 网格代价 → 闭合 tour |
 | `config.py` | `DetectionZone`、`SpatialRectPrior`（矩形格先验加成）等 |
 | `detection_zones.py` | 检测框 JSON（`zones` 列表）读写 |
-| `zoning.py` / `costmap.py` / `planner.py` | 均匀矩形、代价场、最近邻 + 2-opt |
+| `zoning.py` / `costmap.py` / `planner.py` | 均匀矩形、代价场、最近邻 + 2-opt（可选调用 ``exploration_core_cpp/rbcv_plan_tour``） |
 | `fusion.py` / `aggregation.py` | 区内物体计数（track / DBSCAN）、权重聚合 |
 | `pose_stream.py` / `rosbag_ros1.py` | ROS2 bag / ROS1 bag 位姿（依赖 `rosbags`） |
 | `scripts/run_semantic_stack.py` | **主入口**：survey JSON + bag + 检测 JSONL → 导航计划 JSON |

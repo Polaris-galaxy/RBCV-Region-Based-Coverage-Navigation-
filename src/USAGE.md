@@ -218,7 +218,7 @@ py scripts\demo_regions.py ..\map_tools\maps\map7.yaml 2.5 ..\map_tools\maps\my_
 
 1. **`survey_zones.json`**（示例：`exploration/data/survey_zones.example.json`）  
 2. **`detections.jsonl`**（示例：`exploration/data/detections.example.jsonl`）  
-3. ROS1 bag 与检测同一时间系；可用 `python3 exploration/scripts/inspect_rosbag1.py <bag>` 查看话题。
+3. **ROS1** bag；**推荐**话题 **`/odom`**（**`nav_msgs/Odometry`**）。解析时仅用平面 **`x, y`** 与检测时间对齐；分区与检测坐标建议在 **`map`** 系并与 bag 位姿一致。可用 `python3 exploration/scripts/inspect_rosbag1.py <bag>` 查看话题。
 
 在 **`src/`** 下生成计划 JSON：
 

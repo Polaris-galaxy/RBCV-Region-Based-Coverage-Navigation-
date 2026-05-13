@@ -6,7 +6,14 @@ from collections import defaultdict
 
 from shapely.geometry import Polygon, Point, box as shapely_box
 
-from .config import AggregationParams, DetectionZone, InitialRegionWeight
+from .config import (
+    INITIAL_WEIGHT_CEIL,
+    INITIAL_WEIGHT_DEFAULT,
+    INITIAL_WEIGHT_FLOOR,
+    AggregationParams,
+    DetectionZone,
+    InitialRegionWeight,
+)
 from .zoning import GridRect
 
 
@@ -18,19 +25,23 @@ def _poly(z: DetectionZone) -> Polygon:
     return shapely_box(x0, y0, x1, y1)
 
 
+def _clamp_initial(w: float) -> float:
+    return max(INITIAL_WEIGHT_FLOOR, min(INITIAL_WEIGHT_CEIL, float(w)))
+
+
 def resolve_initial_weights(zones: list[DetectionZone], priors: list[InitialRegionWeight]) -> dict[str, float]:
-    """zone_id -> 初始权重."""
+    """zone_id -> 初始权重（夹在 ``INITIAL_WEIGHT_FLOOR``..``INITIAL_WEIGHT_CEIL``）。"""
     zw: dict[str, float] = {}
     for z in zones:
         if z.base_weight_hint is not None:
-            zw[z.zone_id] = float(z.base_weight_hint)
+            zw[z.zone_id] = _clamp_initial(z.base_weight_hint)
         else:
-            zw[z.zone_id] = 0.5
+            zw[z.zone_id] = INITIAL_WEIGHT_DEFAULT
 
     for p in priors:
         if p.applies_to_zone_ids:
             for zid in p.applies_to_zone_ids:
-                zw[zid] = float(p.weight)
+                zw[zid] = _clamp_initial(p.weight)
     return zw
 
 

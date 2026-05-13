@@ -1,4 +1,7 @@
-"""ROS 1 (.bag v2.0) 浏览话题与解码平面位姿.
+"""ROS 1 (.bag v2.0) 浏览话题与解码 **平面 2D** 位姿.
+
+从常见消息（尤其是 **`nav_msgs/Odometry`**，如话题 **`/odom`**）读取
+``pose.pose.position.x / y``，并由四元数计算 **yaw**；轨迹插值与检测区判定仅使用 **(x, y)**。
 
 依赖 ``pip install rosbags``（纯 Python，无需在本机安装 ROS）。
 """
