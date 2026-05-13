@@ -14,6 +14,28 @@
 | 环境变量、排错、`RBCV_BEST` | [第 6 节](#6-调参与排错) |
 | 语义探索 + rosbag | [第 7 节](#7-语义探索回路explorationrosbag--视觉--导航闭环) |
 | ROS1 发布 `/map` 与分区栅格；两阶段 launch（分区→survey / 语义栈） | [第 8 节](#8-ros1-后续步骤可暂时忽略) |
+| **从地图到闭合路径（总览表）** | 快速索引下一节 **「端到端总览」** |
+
+---
+
+## 端到端总览：从地图到语义路径与代价
+
+下面把你心里的顺序与仓库里的**真实产物**对齐（括号内为文档章节或命令入口）。
+
+| 步骤 | 你做的 | 在本仓库里对应什么 | 产出 / 备注 |
+|------|--------|-------------------|-------------|
+| 1 | 导入地图 | [§1 准备地图](#1-准备地图)；ROS 场景下再 [§8.1](#81-一键启动推荐rbcv_bringup) 发布 `/map` | `map_tools/maps/*.yaml` + `*.pgm` |
+| 2 | 划分区域 | [§2 长方形分区](#2-划分长方形区域)；可选 [§3 验证](#3-验证分区对齐) | `my_regions.json`（米、`map` 系） |
+| 3 | 生成检测框 | [§4 `demo_regions.py`](#4-圆盘覆盖demo_regionspy) 对**每个分区**算圆盘覆盖点；或 **ROS** [§8.4 阶段一](#84-两阶段-launch分区--检测框-json语义探索--计划-json) 写出 `survey_zones.json` | **`survey_zones.json`**：每项含 `zone_id`、`bbox_xyxy`/`polygon_xy`、**`coverage.sites_m`**（覆盖站位） |
+| 4 | 初始区域权重 | 在 **`survey_zones.json`** 里给部分 zone 写 **`base_weight_hint`**；或在跑语义栈时用 **`--priors-json`**（按 `zone_id` 指定 `InitialRegionWeight`），见 `exploration/README.md` | 与后续探测计数在 `aggregation` 里融合 |
+| 5 | 用 bag 给检测框赋权 | [§7](#7-语义探索回路explorationrosbag--视觉--导航闭环)：`run_semantic_stack.py`（或阶段二 launch）传入 **`--bag`、`--topic /odom`、`--detections`**；离线用 **`rosbags`** 插值机器人 **2D** 位置，仅在 **coverage 内**的视觉观测参与计数，再得到 **框级权重** | **`zone_weights`**（及 `per_zone_class_counts`）。无 bag 时只做自检，权重主要来自先验与空计数 |
+| 6 | 生成「方形」区域 | **`exploration`** 在工作区外包络上划 **均匀矩形格**（可调 `--cell-size`），不是再画一批检测框；格内聚合各检测框权重 + 可选矩形先验 | **`rect_weights`**，格心即路径顶点候选 |
+| 7 | 代价地图 | **`exploration/costmap.py`**：由 **`rect_weights`** 与 `PathPlannerParams` 得到边上「代价−（权重）奖励」，用于图搜索；这是 **语义层** 权图，**不是**直接替换 `move_base` 的 `costmap_2d`；若要接 Nav，需自行把权重同步到 costmap 层 | 计划 JSON 里不单独落盘占据栅格，算法在栈内完成 |
+| 8 | 最终路径 | 同上命令输出 **`waypoints_xy`**：**闭合**回路（起点=终点），NN + 2-opt；可选 C++ `rbcv_plan_tour` 加速，见 `exploration_core_cpp/README.md` | **`out_semantic_plan.json` / `rbcv_semantic_plan.json`**；接 **move_base** 时仍要叠 **`/map` 占据** 做碰撞约束 |
+
+**一句话顺序：** 地图 → `regions.json` → 圆盘覆盖 → **`survey_zones.json`** →（写先验）→ **`run_semantic_stack`**（+ 可选 bag + `detections.jsonl`）→ **矩形格权重 + 语义代价 + `waypoints_xy`**。
+
+若你原文「权重复制」是指 **把某一区域的权重拷贝到另一区域**，当前脚本没有专用开关；需要可在 JSON 里手工复制 `base_weight_hint` / 后处理 `zone_weights`，或为多个 `zone_id` 配同一条 `--priors-json` 记录。
 
 ---
 
