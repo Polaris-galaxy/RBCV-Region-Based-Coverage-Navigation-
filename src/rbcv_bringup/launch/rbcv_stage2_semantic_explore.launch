@@ -7,6 +7,8 @@
   <arg name="topic" default="/odom"/>
   <arg name="detections" default=""/>
   <arg name="cell_size" default="0"/>
+  <arg name="preview_out" default="$(find map_tools)/maps/rbcv_stage2_preview.png"/>
+  <arg name="show_preview" default="true"/>
 
   <node pkg="rbcv_bringup" type="rbcv_semantic_stack_cli.py" name="semantic_stack" output="screen">
     <env name="RBCV_SEMANTIC_FROM_LAUNCH" value="1"/>
@@ -16,5 +18,8 @@
     <env name="RBCV_TOPIC" value="$(arg topic)"/>
     <env name="RBCV_DET" value="$(arg detections)"/>
     <env name="RBCV_CELL" value="$(arg cell_size)"/>
+    <env name="RBCV_PREVIEW_OUT" value="$(arg preview_out)"/>
+    <env name="RBCV_SHOW_PREVIEW" value="$(arg show_preview)"/>
   </node>
 </launch>
+

@@ -10,4 +10,6 @@
   <exec_depend>map_tools</exec_depend>
   <exec_depend>coverage_regions_ros</exec_depend>
   <exec_depend>python3-shapely</exec_depend>
+  <exec_depend>python3-matplotlib</exec_depend>
 </package>
+

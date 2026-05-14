@@ -6,6 +6,8 @@
   <arg name="frame_id" default="map"/>
   <arg name="coverage_radius_m" default="2.5"/>
   <arg name="survey_out" default="$(find map_tools)/maps/rbcv_survey_zones.json"/>
+  <arg name="preview_out" default="$(find map_tools)/maps/rbcv_stage1_preview.png"/>
+  <arg name="show_preview" default="true"/>
 
   <include file="$(find map_tools)/launch/publish_static_map.launch">
     <arg name="map_yaml" value="$(arg map_yaml)"/>
@@ -17,5 +19,11 @@
   </include>
 
   <node pkg="rbcv_bringup" type="regions_to_survey_zones.py" name="regions_to_survey" output="screen"
-        args="$(arg map_yaml) $(arg regions_json) $(arg coverage_radius_m) $(arg survey_out)"/>
+        args="$(arg map_yaml) $(arg regions_json) $(arg coverage_radius_m) $(arg survey_out) --preview-out $(arg preview_out)"
+        if="$(arg show_preview)"/>
+
+  <node pkg="rbcv_bringup" type="regions_to_survey_zones.py" name="regions_to_survey_no_preview" output="screen"
+        args="$(arg map_yaml) $(arg regions_json) $(arg coverage_radius_m) $(arg survey_out)"
+        unless="$(arg show_preview)"/>
 </launch>
+
