@@ -1,0 +1,8 @@
+prefix=/home/ubuntu/RBCV-Region-Based-Coverage-Navigation-/devel
+
+Name: map_tools
+Description: Description of map_tools
+Version: 0.1.0
+Cflags: 
+Libs: -L${prefix}/lib 
+Requires: 

@@ -10,6 +10,8 @@ import json
 import sys
 from pathlib import Path
 
+import rospy
+
 
 def _import_demo_regions():
     """从任意 cwd 定位 ``rbcv_disk_coverage/scripts/demo_regions.py``。"""
@@ -32,7 +34,8 @@ def main() -> None:
     pa.add_argument("regions_json", help="分区 regions.json")
     pa.add_argument("radius_m", type=float, help="覆盖半径（米）")
     pa.add_argument("survey_out", help="输出的 survey_zones.json 路径")
-    args = pa.parse_args()
+    argv = rospy.myargv(sys.argv)
+    args = pa.parse_args(argv[1:])
 
     dr = _import_demo_regions()
     from coverage_planner.region_io import load_regions_json

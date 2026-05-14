@@ -1,0 +1,8 @@
+prefix=/home/ubuntu/RBCV-Region-Based-Coverage-Navigation-/devel
+
+Name: coverage_regions_ros
+Description: Description of coverage_regions_ros
+Version: 0.1.0
+Cflags: 
+Libs: -L${prefix}/lib 
+Requires: 

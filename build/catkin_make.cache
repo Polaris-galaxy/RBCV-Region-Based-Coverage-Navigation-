@@ -1,0 +1,2 @@
+coverage_regions_ros:map_tools:rbcv_bringup
+-DCATKIN_DEVEL_PREFIX=/home/ubuntu/RBCV-Region-Based-Coverage-Navigation-/devel -DCMAKE_INSTALL_PREFIX=/home/ubuntu/RBCV-Region-Based-Coverage-Navigation-/install -G Unix Makefiles

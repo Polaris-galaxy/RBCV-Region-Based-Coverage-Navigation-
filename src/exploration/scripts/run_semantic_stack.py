@@ -105,6 +105,24 @@ def main() -> None:
         print("错误：--bag、--topic、--detections 必须三者同时提供或全部省略。", file=sys.stderr)
         sys.exit(2)
 
+    if bag and topic and det:
+        bag_p = Path(bag).expanduser()
+        det_p = Path(det).expanduser()
+        if not bag_p.is_file():
+            print(
+                f"错误：找不到 ROS1 bag 文件：{bag}\n"
+                "文档里的 bag:=/path/to/record.bag 只是示例，请改成你机器上 .bag 的绝对路径（例如 /home/你/data/run1.bag）。",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+        if not det_p.is_file():
+            print(
+                f"错误：找不到视觉检测 JSONL：{det}\n"
+                "请将 detections:=/path/to/detections.jsonl 换成真实文件路径。",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+
     priors = _parse_priors(args.priors_json if args.priors_json else None)
     rect_priors = _parse_rect_priors(args.rect_priors_json if args.rect_priors_json else None)
 

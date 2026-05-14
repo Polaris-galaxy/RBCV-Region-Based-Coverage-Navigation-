@@ -3,9 +3,11 @@
   <name>rbcv_bringup</name>
   <version>0.1.0</version>
   <description>组合 launch：地图+分区、分区→survey_zones、语义探索栈入口脚本。</description>
-  <maintainer email="todo@todo">TODO</maintainer>
+  <maintainer email="maintainer@example.com">RBCV maintainers</maintainer>
   <license>BSD</license>
   <buildtool_depend>catkin</buildtool_depend>
+  <exec_depend>rospy</exec_depend>
   <exec_depend>map_tools</exec_depend>
   <exec_depend>coverage_regions_ros</exec_depend>
+  <exec_depend>python3-shapely</exec_depend>
 </package>

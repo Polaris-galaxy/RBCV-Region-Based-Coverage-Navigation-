@@ -1,0 +1,7 @@
+set(map_tools_SETUP_PY_SETUP_MODULE "setuptools")
+set(map_tools_SETUP_PY_VERSION "0.1.0")
+set(map_tools_SETUP_PY_SCRIPTS "")
+set(map_tools_SETUP_PY_PACKAGES "map_tools")
+set(map_tools_SETUP_PY_PACKAGE_DIRS "python/map_tools")
+set(map_tools_SETUP_PY_MODULES "")
+set(map_tools_SETUP_PY_MODULE_DIRS "")
