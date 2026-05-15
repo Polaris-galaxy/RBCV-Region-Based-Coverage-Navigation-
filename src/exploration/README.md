@@ -7,16 +7,6 @@
 | **几何覆盖** | 障碍栅格 + 长方形分区 → 圆盘观测点（`demo_regions.py` 等） |
 | **本包** | 检测框 + **覆盖站位圆**、rosbag **机器人轨迹**、视觉 **JSONL** → 目标计数与去重 → **框权重** → 工作区 **均匀矩形格** → **代价/奖励** → **闭合路径** |
 
-## 快速使用
-
-1. **安装依赖**（在仓库根或 `src` 上级）：`pip install -r requirements.txt`（需含 `rosbags`、`shapely` 等）。
-2. **进入 `src/`**，执行语义栈：
-   - **有 bag + 检测**：`--survey`、`--bag`、`--topic /odom`、`--detections`、`--out` **五类参数都要齐**（`--bag` 与检测成对）。
-   - **仅自检网格/路径**：省略 `--bag`、`--topic`、`--detections` 三者。
-3. **示例命令**（见下节「一键栈」与 `scripts/run_semantic_stack.py` 顶部注释；**检视 bag 话题**：`py exploration/scripts/inspect_rosbag1.py <你的.bag>`）。
-4. **ROS1 launch 两阶段**（需 catkin）：阶段一写出 `survey_zones.json`，阶段二写出语义计划 JSON；说明与默认 **`/odom`** 见 **`../rbcv_bringup/README.md`**，全流程见 **`../USAGE.md`** 第 7、8 节。
-5. **输出**：`out_semantic_plan.json`（或 launch 指定的路径）中含 `zone_weights`、`rect_weights`、**`waypoints_xy`** 等；**`waypoints_xy`** 为 **2D** 闭合路径点，接 **move_base** 时仍需叠加 **`/map` 占据** 做避障。
-
 ## 物体记录策略（默认）
 
 - 视觉若提供稳定 **`track_id`**：按 track 去重。  
@@ -42,11 +32,9 @@
 - **`track_id`**：可选。  
 - **`confidence`**：可选。
 
-## Rosbag（ROS1，平面 2D）
+## Rosbag
 
-- **ROS 版本**：仅对 **ROS1** ``.bag``（v2.0）做离线解析（依赖 `rosbags`，无需本机装 ROS）。
-- **推荐话题**：**`/odom`**，消息类型 **`nav_msgs/Odometry`**。也支持 `geometry_msgs/PoseStamped` 等含 `Pose` 的类型（见 `rosbag_ros1.extract_pose_xy_yaw`）。
-- **2D 语义**：只用 **`x`、`y`**（及内部 **`yaw`**）；与检测区多边形、`detections.jsonl` 中的目标地面点须在 **同一平面坐标系**（通常为 **`map`**）。若 bag 里 `/odom` 在 **`odom`** 帧而分区在 **`map`** 帧，需自行保证录制时已对齐、或换用 **`map` 系** 位姿话题（例如融合定位发布的里程计）。
+- 话题需能被 `exploration/rosbag_ros1.iter_poses_ros1_topic` 解码（常见 `nav_msgs/Odometry`、`geometry_msgs/PoseStamped`）。  
 - ** Inspect**：`py exploration/scripts/inspect_rosbag1.py your.bag`
 
 ## 一键栈
@@ -57,20 +45,37 @@ py exploration/scripts/run_semantic_stack.py --survey ... --bag ... --topic /odo
 
 可选：`--priors-json`（按 `zone_id` 指定**初始权重**）、`--rect-priors-json`（在**均匀格**上对某轴对齐矩形加薪）、`--cell-size`、`--merge-radius`。
 
-输出 **`out_semantic_plan.json`**：`zone_weights`、`rect_weights`、**`waypoints_xy`**（闭合回路中心点序列）。后续可接 **ROS1 move_base** 或 ROS2 Nav2，并结合实际占据栅格做碰撞检查。
+输出 **`out_semantic_plan.json`**：`zone_weights`、`rect_weights`、**`waypoints_xy`**（闭合回路中心点序列）。后续可接 Nav2 / 实际占据栅格再做碰撞检查。
 
 ## 与 `regions.json` 的衔接
 
 长方形分区文件可由 **`exploration.regions_bridge.load_zones_from_regions_json`** 转成 `DetectionZone`，再**人工或脚本**补上 **`coverage`** 段写入 `survey_zones.json`。
 
-## 初始权重范围
+## RT-DETR ↔ RBCV 话题与录制
 
-- ``InitialRegionWeight`` 与 ``base_weight_hint`` 在聚合前会钳位到 ``INITIAL_WEIGHT_FLOOR``..``INITIAL_WEIGHT_CEIL``（默认 **0.35 ~ 0.85**），未给时用 ``INITIAL_WEIGHT_DEFAULT``（**0.55**）。  
-- 探测完成后的**框权重**仍由 ``AggregationParams.weight_floor`` / ``weight_ceil``（默认 **0.15 ~ 1.0**）约束，以免与导航代价尺度脱节。
+与你的 **Ultralytics RT-DETR** 仓库并排使用时，请在 **RT-detr/rbcv_ros/** 中部署检测发布；RBCV 侧约定如下。
 
-## C++ 加速（可选）
+### 发布（实时，ROS1）
 
-大规模均匀格下，**闭合回路**（最近邻 + 2-opt）可编译 ``../exploration_core_cpp`` 中的 ``rbcv_plan_tour``，并设置环境变量 **`RBCV_EXPLORATION_PLANNER_EXE`**。未设置时 **自动使用纯 Python**，结果等价。
+| 话题 | 类型 | 内容 |
+|------|------|------|
+| `/rbcv/semantic_detections`（可调） | `std_msgs/String` | **每条消息一个 JSON**：`{"t_s","class_name","x","y","confidence","track_id"}`，`x,y` 为 **map** 平面交点（米） |
+
+脚本：`RT-detr/rbcv_ros/ros1_rtdetr_rbcv_publisher.py`（需 TF `map`→光学系 **或** 静态 YAML `~static_T_map_cam_yaml` + 内参）。
+
+### 录制到 JSONL（ROS1）
+
+| 节点 | 作用 |
+|------|------|
+| `exploration/ros1_bridge/detection_recorder_node.py` | 订阅上述话题，**追加**写入 `*.jsonl`，供 `run_semantic_stack.py --detections` |
+
+### 离线 bag（无 ROS master）
+
+| 脚本 | 作用 |
+|------|------|
+| `RT-detr/rbcv_ros/offline_bag_rtdetr_jsonl.py` | 仅 **rosbags + PyTorch**，从 bag 图像 topic 直接写 **JSONL** |
+
+外参模板：`RT-detr/rbcv_ros/static_extrinsic.example.yaml`（务必换成真实 **T_map_optical** 与 **K**）。
 
 ## 其它
 

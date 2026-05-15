@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from collections import defaultdict
 
-from .aggregation import aggregate_rect_weights, finalize_zone_weights, resolve_initial_weights
+from .aggregation import (
+    aggregate_rect_weights,
+    finalize_zone_weights,
+    resolve_initial_weights,
+)
 from .config import (
     AggregationParams,
     DetectionZone,
@@ -14,10 +18,8 @@ from .config import (
     SpatialRectPrior,
     StartSamplingParams,
 )
-from .zoning import GridRect, build_uniform_grid, suggest_cell_size
-from .costmap import build_grid_cost_fields
-from .fusion import count_unique_objects_in_zones
 from .planner import plan_exploration_tour, sample_random_start_cell_key
+from .zoning import GridRect, build_uniform_grid, suggest_cell_size
 
 
 def _spatial_priors_to_initial_rect_weights(
